@@ -15,6 +15,14 @@
   ; hook cannot resurrect a shortcut the user asked not to have.
   ${If} $UpdateMode <> 1
   ${AndIf} $NoShortcutMode <> 1
+    ; Match the install mode explicitly rather than inheriting whatever context
+    ; happens to be set - see the note in POSTUNINSTALL for why inheriting it
+    ; is not safe.
+    !if "${INSTALLMODE}" == "perMachine"
+      SetShellVarContext all
+    !else
+      SetShellVarContext current
+    !endif
     !if "${STARTMENUFOLDER}" != ""
       CreateShortcut "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME} User Guide.lnk" \
         "$INSTDIR\${PRODUCTNAME} User Guide.html"
@@ -29,6 +37,19 @@
   ; Not gated on $UpdateMode: an update replaces the shortcut in POSTINSTALL
   ; anyway, and a stale link pointing into a directory that no longer exists is
   ; worse than a missing one.
+  ;
+  ; Deleted from BOTH shell contexts, explicitly, because the context here is
+  ; not ours and cannot be assumed. Tauri runs `SetShellVarContext current`
+  ; inside its delete-app-data branch, which executes *before* this hook is
+  ; inserted - so with that checkbox ticked $SMPROGRAMS quietly means the
+  ; per-user Start Menu while a perMachine install put the shortcut in the
+  ; machine-wide one. That left the shortcut behind on exactly one path, which
+  ; is the kind of conditional miss that survives casual testing. Deleting from
+  ; both contexts cannot be wrong under any install mode.
+  SetShellVarContext all
+  Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME} User Guide.lnk"
+  Delete "$SMPROGRAMS\${PRODUCTNAME} User Guide.lnk"
+  SetShellVarContext current
   Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME} User Guide.lnk"
   Delete "$SMPROGRAMS\${PRODUCTNAME} User Guide.lnk"
 
