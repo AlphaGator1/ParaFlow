@@ -67,6 +67,90 @@ const VK_RMENU: u32 = 0xA5;
 const VK_LWIN: u32 = 0x5B;
 const VK_RWIN: u32 = 0x5C;
 
+/// Human-readable name for a canonical virtual-key code.
+///
+/// Chords are stored in settings.json by name rather than by number, so the
+/// file stays editable by hand and readable when someone is working out why
+/// their hotkey stopped working.
+pub fn vk_name(vk: u32) -> String {
+    match vk {
+        VK_CONTROL => "Ctrl".into(),
+        VK_SHIFT => "Shift".into(),
+        VK_MENU => "Alt".into(),
+        VK_WIN => "Win".into(),
+        VK_SPACE => "Space".into(),
+        VK_TAB => "Tab".into(),
+        VK_CAPITAL => "CapsLock".into(),
+        0x30..=0x39 => char::from(vk as u8).to_string(), // 0-9
+        0x41..=0x5A => char::from(vk as u8).to_string(), // A-Z
+        0x70..=0x87 => format!("F{}", vk - 0x6F),        // F1-F24
+        other => format!("VK_{other:#04X}"),
+    }
+}
+
+/// Inverse of [`vk_name`]. Returns `None` for anything unrecognised, so a
+/// hand-edited settings file with a typo falls back to the default rather
+/// than producing an unpressable chord.
+pub fn vk_from_name(name: &str) -> Option<u32> {
+    let n = name.trim();
+    let upper = n.to_ascii_uppercase();
+    match upper.as_str() {
+        "CTRL" | "CONTROL" => return Some(VK_CONTROL),
+        "SHIFT" => return Some(VK_SHIFT),
+        "ALT" | "MENU" => return Some(VK_MENU),
+        "WIN" | "SUPER" | "META" => return Some(VK_WIN),
+        "SPACE" => return Some(VK_SPACE),
+        "TAB" => return Some(VK_TAB),
+        "CAPSLOCK" => return Some(VK_CAPITAL),
+        _ => {}
+    }
+    if upper.len() == 1 {
+        let c = upper.as_bytes()[0];
+        if c.is_ascii_alphanumeric() {
+            return Some(c as u32);
+        }
+    }
+    if let Some(rest) = upper.strip_prefix('F') {
+        if let Ok(n) = rest.parse::<u32>() {
+            if (1..=24).contains(&n) {
+                return Some(0x6F + n);
+            }
+        }
+    }
+    if let Some(hex) = upper.strip_prefix("VK_0X") {
+        return u32::from_str_radix(hex, 16).ok();
+    }
+    None
+}
+
+pub const VK_SPACE: u32 = 0x20;
+pub const VK_TAB: u32 = 0x09;
+pub const VK_CAPITAL: u32 = 0x14;
+
+impl Chord {
+    /// The chord as names, for display and for settings.json.
+    pub fn names(&self) -> Vec<String> {
+        self.keys.iter().map(|k| vk_name(*k)).collect()
+    }
+
+    /// Parse a chord from names. `None` if any name is unrecognised or the
+    /// result would be empty.
+    pub fn from_names<S: AsRef<str>>(names: &[S]) -> Option<Chord> {
+        let keys: Option<Vec<u32>> =
+            names.iter().map(|n| vk_from_name(n.as_ref()).map(canonical)).collect();
+        let keys = keys?;
+        if keys.is_empty() {
+            return None;
+        }
+        Some(Chord { keys })
+    }
+
+    /// How it should read in the UI: "Ctrl + Win".
+    pub fn label(&self) -> String {
+        self.names().join(" + ")
+    }
+}
+
 /// Collapse left/right key variants onto one canonical code so the chord
 /// doesn't care which side of the keyboard was used.
 fn canonical(vk: u32) -> u32 {
@@ -79,15 +163,85 @@ fn canonical(vk: u32) -> u32 {
     }
 }
 
+/// What the settings screen sees while the user presses a new chord.
+#[derive(Debug, Clone)]
+pub enum CaptureEvent {
+    /// Keys held right now, so the field can update as the chord is built.
+    Preview(Vec<u32>),
+    /// Everything has been released. This is the chord to save.
+    Done(Vec<u32>),
+}
+
+/// In-flight chord capture.
+struct Capture {
+    /// The largest set of keys seen held at once. Taking the maximum rather
+    /// than the final state matters because releasing a chord is gradual -
+    /// reading `held` at the moment the last key goes up would capture one key.
+    best: Vec<u32>,
+    tx: Sender<CaptureEvent>,
+}
+
 struct HookState {
     chord: Chord,
     held: HashSet<u32>,
     /// True while the full chord is engaged, so we only emit one Down per press.
     engaged: bool,
     tx: Sender<PttEvent>,
+    /// When set, keystrokes are being read to define a new chord rather than
+    /// matched against the current one.
+    capture: Option<Capture>,
 }
 
 static STATE: OnceCell<Mutex<HookState>> = OnceCell::new();
+
+/// Order a set of keys for display: modifiers first, in a fixed order, then
+/// the rest. Without this a HashSet would produce "Win + Ctrl" one run and
+/// "Ctrl + Win" the next.
+fn ordered(keys: &HashSet<u32>) -> Vec<u32> {
+    const MODIFIER_ORDER: [u32; 4] = [VK_CONTROL, VK_MENU, VK_SHIFT, VK_WIN];
+    let mut out: Vec<u32> = MODIFIER_ORDER.iter().copied().filter(|m| keys.contains(m)).collect();
+    let mut rest: Vec<u32> =
+        keys.iter().copied().filter(|k| !MODIFIER_ORDER.contains(k)).collect();
+    rest.sort_unstable();
+    out.extend(rest);
+    out
+}
+
+/// Swap the push-to-talk chord without reinstalling the hook.
+pub fn set_chord(chord: Chord) {
+    let Some(cell) = STATE.get() else { return };
+    let normalized = Chord { keys: chord.keys.iter().copied().map(canonical).collect() };
+    let mut st = cell.lock();
+    tracing::info!(chord = %normalized.label(), "push-to-talk chord changed");
+    st.chord = normalized;
+    // Any partially-held state refers to the old chord.
+    st.held.clear();
+    st.engaged = false;
+}
+
+/// Start reading keystrokes as a chord definition.
+///
+/// While capturing, every key is swallowed - the user is pressing combinations
+/// that would otherwise trigger things, and having the capture field also open
+/// the Start menu would be its own bug.
+pub fn begin_capture(tx: Sender<CaptureEvent>) {
+    let Some(cell) = STATE.get() else { return };
+    let mut st = cell.lock();
+    st.held.clear();
+    st.engaged = false;
+    st.capture = Some(Capture { best: Vec::new(), tx });
+    tracing::info!("hotkey capture started");
+}
+
+/// Abandon capture without changing anything.
+pub fn cancel_capture() {
+    let Some(cell) = STATE.get() else { return };
+    let mut st = cell.lock();
+    if st.capture.take().is_some() {
+        st.held.clear();
+        tracing::info!("hotkey capture cancelled");
+    }
+}
 
 /// Install the hook and pump messages. Blocks forever - call on its own thread.
 pub fn run(chord: Chord, tx: Sender<PttEvent>) -> anyhow::Result<()> {
@@ -99,6 +253,7 @@ pub fn run(chord: Chord, tx: Sender<PttEvent>) -> anyhow::Result<()> {
             held: HashSet::new(),
             engaged: false,
             tx,
+            capture: None,
         }))
         .map_err(|_| anyhow::anyhow!("keyboard hook already installed"))?;
 
@@ -141,27 +296,61 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
     let vk = canonical(kb.vkCode);
     let msg = wparam.0 as u32;
+    let is_down = matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN);
+    let is_up = matches!(msg, WM_KEYUP | WM_SYSKEYUP);
 
     let mut st = cell.lock();
-    let mut just_engaged = false;
 
-    match msg {
-        WM_KEYDOWN | WM_SYSKEYDOWN => {
+    // --- capture mode: read the chord, let nothing through ------------------
+    if st.capture.is_some() {
+        if is_down {
             st.held.insert(vk);
-            if !st.engaged && st.chord.keys.iter().all(|k| st.held.contains(k)) {
-                st.engaged = true;
-                just_engaged = true;
-                let _ = st.tx.send(PttEvent::Down);
-            }
-        }
-        WM_KEYUP | WM_SYSKEYUP => {
+        } else if is_up {
             st.held.remove(&vk);
-            if st.engaged && !st.chord.keys.iter().all(|k| st.held.contains(k)) {
-                st.engaged = false;
-                let _ = st.tx.send(PttEvent::Up);
-            }
         }
-        _ => {}
+        let current = ordered(&st.held);
+        let empty = st.held.is_empty();
+
+        if let Some(cap) = st.capture.as_mut() {
+            if current.len() > cap.best.len() {
+                cap.best = current.clone();
+            }
+            if empty {
+                let chord = std::mem::take(&mut cap.best);
+                let tx = cap.tx.clone();
+                st.capture = None;
+                drop(st);
+                if !chord.is_empty() {
+                    let _ = tx.send(CaptureEvent::Done(chord));
+                }
+            } else {
+                let tx = cap.tx.clone();
+                drop(st);
+                let _ = tx.send(CaptureEvent::Preview(current));
+            }
+        } else {
+            drop(st);
+        }
+        // Swallow it. The user is pressing arbitrary combinations; letting them
+        // reach other apps would fire whatever they happen to be bound to.
+        return LRESULT(1);
+    }
+
+    // --- normal mode --------------------------------------------------------
+    let mut just_engaged = false;
+    if is_down {
+        st.held.insert(vk);
+        if !st.engaged && st.chord.keys.iter().all(|k| st.held.contains(k)) {
+            st.engaged = true;
+            just_engaged = true;
+            let _ = st.tx.send(PttEvent::Down);
+        }
+    } else if is_up {
+        st.held.remove(&vk);
+        if st.engaged && !st.chord.keys.iter().all(|k| st.held.contains(k)) {
+            st.engaged = false;
+            let _ = st.tx.send(PttEvent::Up);
+        }
     }
     let uses_win = st.chord.keys.contains(&VK_WIN);
     drop(st);

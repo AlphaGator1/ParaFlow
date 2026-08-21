@@ -155,9 +155,40 @@ not in version control.
 
 `setup.ps1 -NoCleanup` skips the cleanup model if you only want raw dictation.
 
+### Settings
+
+Tray → **Settings…**, or edit `%LOCALAPPDATA%\ParaFlow\settings.json` by hand:
+
+```json
+{
+  "hotkey": ["Ctrl", "Win"],
+  "overlay": "bottom",
+  "idleSeconds": 30,
+  "cleanup": true,
+  "chimes": true
+}
+```
+
+Chords are stored by **name**, not virtual-key number, so the file stays
+readable and hand-editable. Unrecognised names fall back to the default rather
+than producing an unpressable hotkey, and `idleSeconds` is clamped to 5–3600.
+Every field is `#[serde(default)]`, so a partial file is valid.
+
+Changing the hotkey, overlay, idle timeout or chimes takes effect immediately.
+Turning cleanup on or off starts or stops a sidecar holding gigabytes of VRAM,
+so that one asks for a restart.
+
+**Rebinding** uses the low-level hook in a capture mode: it reads the chord and
+swallows every keystroke while doing so, since the user is pressing arbitrary
+combinations and having the capture field also open the Start menu would be its
+own bug. It records the *largest* set of keys held at once rather than the
+final state, because releasing a chord is gradual and reading the last key up
+would capture one key.
+
 ### Configuration
 
-All optional, read at startup:
+Environment variables override the settings file where set, so a report can be
+reproduced without editing someone's saved configuration. All optional:
 
 | variable | default | meaning |
 |---|---|---|

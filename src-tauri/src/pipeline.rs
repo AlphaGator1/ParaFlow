@@ -71,8 +71,6 @@ pub struct Pipeline {
     asr: Asr,
     polish: Option<Polish>,
     app: AppHandle,
-    /// Idle time after which the microphone is released.
-    idle_timeout: Duration,
 }
 
 impl Pipeline {
@@ -81,9 +79,8 @@ impl Pipeline {
         asr: Asr,
         polish: Option<Polish>,
         app: AppHandle,
-        idle_timeout: Duration,
     ) -> Self {
-        Self { mic, asr, polish, app, idle_timeout }
+        Self { mic, asr, polish, app }
     }
 
     fn emit(&self, stage: Stage) {
@@ -115,7 +112,7 @@ impl Pipeline {
         tracing::info!(
             asr = ?self.asr.backend(),
             cleanup = self.polish.is_some(),
-            idle_timeout_s = self.idle_timeout.as_secs(),
+            idle_timeout_s = crate::settings::current().effective_idle().as_secs(),
             "pipeline ready; microphone stays closed until first use"
         );
 
@@ -164,7 +161,7 @@ impl Pipeline {
                     // Transcription can take a moment; the idle clock should
                     // start from when we finished, not when the key came up.
                     last_activity = Instant::now();
-                    self.emit_mic(self.idle_timeout);
+                    self.emit_mic(crate::settings::current().effective_idle());
                 }
 
                 Ok(PttEvent::ToggleLatch) => {
@@ -174,11 +171,14 @@ impl Pipeline {
                 Err(RecvTimeoutError::Timeout) => {
                     // Idle sweep. Never close mid-utterance.
                     if self.mic.is_open() && mark.is_none() {
+                        // Read per sweep rather than caching, so changing the
+                        // timeout in settings takes effect immediately.
+                        let limit = crate::settings::current().effective_idle();
                         let idle_for = last_activity.elapsed();
-                        if idle_for >= self.idle_timeout {
+                        if idle_for >= limit {
                             self.end_session();
                         } else {
-                            self.emit_mic(self.idle_timeout - idle_for);
+                            self.emit_mic(limit - idle_for);
                         }
                     }
                 }
@@ -201,7 +201,7 @@ impl Pipeline {
 
         self.emit(Stage::Waking);
         let took = self.mic.open()?;
-        self.emit_mic(self.idle_timeout);
+        self.emit_mic(crate::settings::current().effective_idle());
 
         // Tell the user the microphone is live. The chime plays through the
         // speakers and the microphone is already open, so it lands in the ring

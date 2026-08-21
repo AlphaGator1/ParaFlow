@@ -478,3 +478,177 @@ button.primary:hover {
   background: rgba(164, 159, 196, 0.45);
   transition: none;
 }
+
+/* Settings window ========================================================= */
+
+.settings {
+  min-height: 100%;
+  padding: 26px 30px 30px;
+  background: linear-gradient(160deg, #14122e 0%, #1b1640 55%, #241a4d 100%);
+  pointer-events: auto;
+  cursor: default;
+  /* Unlike the HUD this is a form: text must be selectable. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.settings h1 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+
+.settings section {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings h2 {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.settings .hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-bottom: 11px;
+}
+
+/* Hotkey capture --------------------------------------------------------- */
+
+.chord {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 9px 13px;
+  margin-bottom: 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* A live border while capturing, so it is obvious the app is swallowing
+   every keystroke right now and that this state is temporary. */
+.chord.capturing {
+  border-color: rgba(94, 234, 212, 0.6);
+  background: rgba(94, 234, 212, 0.08);
+}
+
+.chord kbd {
+  font-size: 12px;
+  padding: 3px 9px;
+}
+
+.chord .plus {
+  margin: 0 5px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chord-empty {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.capturing-hint {
+  color: var(--teal);
+}
+
+/* Controls --------------------------------------------------------------- */
+
+.settings select,
+.settings input[type="number"] {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+
+.settings select {
+  width: 100%;
+}
+
+.settings input[type="number"] {
+  width: 78px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.settings .check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+
+.settings .check input {
+  margin-top: 2px;
+  accent-color: #c4a8ff;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.settings .check em {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  font-style: normal;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+button.secondary {
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 9px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+button.secondary:hover {
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.settings footer {
+  margin-top: 24px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.notice {
+  margin-top: 16px;
+  padding: 10px 13px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.12);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}

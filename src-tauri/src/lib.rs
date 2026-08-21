@@ -3,6 +3,7 @@
 mod asr;
 mod audio;
 mod hotkey;
+mod settings;
 mod setup;
 mod inject;
 mod pipeline;
@@ -18,11 +19,10 @@ pub mod polish;
 use anyhow::{anyhow, Result};
 use asr::{Asr, Backend};
 use audio::MicSession;
-use hotkey::{Chord, PttEvent};
+use hotkey::PttEvent;
 use pipeline::Pipeline;
 use polish::{Polish, PolishConfig};
 use std::path::PathBuf;
-use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -31,8 +31,6 @@ use tauri::{
 
 /// Instruction model for the cleanup pass.
 const DEFAULT_CLEANUP_MODEL: &str = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf";
-/// How long a dictation session stays live before the microphone is released.
-const DEFAULT_IDLE_SECS: u64 = 30;
 
 fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_string())
@@ -91,8 +89,20 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![setup_status, begin_setup])
+        .invoke_handler(tauri::generate_handler![
+            setup_status,
+            begin_setup,
+            get_settings,
+            save_settings,
+            start_hotkey_capture,
+            cancel_hotkey_capture,
+            open_dictionary_file,
+        ])
         .setup(|app| {
+            // Load before anything reads it, so the hook is installed with the
+            // user's chord rather than the default and then corrected.
+            settings::set_current(settings::Settings::load());
+
             build_tray(app.handle())?;
             let handle = app.handle().clone();
 
@@ -102,7 +112,7 @@ pub fn run() {
             setup::purge_incomplete();
 
             if setup::ready(|p| resolve(p).is_ok()) {
-                place_hud(&handle, HudSpot::Bottom);
+                apply_overlay(&handle, settings::current().overlay);
                 spawn_pipeline(handle);
             } else {
                 // Nothing to dictate with yet. Grow the HUD into a real window
@@ -147,6 +157,14 @@ impl HudSpot {
             "pos-top" => Some(HudSpot::Top),
             "pos-centre" => Some(HudSpot::Centre),
             _ => None,
+        }
+    }
+
+    fn as_setting(self) -> settings::Overlay {
+        match self {
+            HudSpot::Bottom => settings::Overlay::Bottom,
+            HudSpot::Top => settings::Overlay::Top,
+            HudSpot::Centre => settings::Overlay::Centre,
         }
     }
 }
@@ -286,21 +304,142 @@ fn start_pipeline(app: tauri::AppHandle) -> Result<()> {
     // The hook thread must do nothing but forward events, so give it a channel
     // rather than any real work.
     let (tx, rx) = crossbeam_channel::unbounded::<PttEvent>();
+    let chord = settings::current().chord();
+    tracing::info!(hotkey = %chord.label(), "installing push-to-talk chord");
     std::thread::Builder::new().name("paraflow-hotkey".into()).spawn(move || {
-        if let Err(e) = hotkey::run(Chord::default(), tx) {
+        if let Err(e) = hotkey::run(chord, tx) {
             tracing::error!(error = %e, "keyboard hook failed");
         }
     })?;
 
-    let idle = Duration::from_secs(
-        env_or("PARAFLOW_IDLE_SECS", &DEFAULT_IDLE_SECS.to_string())
-            .parse()
-            .unwrap_or(DEFAULT_IDLE_SECS),
-    );
-
     // The microphone is not opened here - the first press does that.
-    Pipeline::new(MicSession::new(), asr, polish, app, idle).run(rx);
+    Pipeline::new(MicSession::new(), asr, polish, app).run(rx);
     Ok(())
+}
+
+// --- settings commands ------------------------------------------------------
+
+#[tauri::command]
+fn get_settings() -> settings::Settings {
+    settings::current()
+}
+
+/// Persist settings and apply whatever can be applied without a restart.
+#[tauri::command]
+fn save_settings(app: tauri::AppHandle, next: settings::Settings) -> Result<(), String> {
+    let previous = settings::current();
+
+    next.save().map_err(|e| e.to_string())?;
+    settings::set_current(next.clone());
+
+    // The hook holds its own copy of the chord, so push the new one in.
+    if next.hotkey != previous.hotkey {
+        hotkey::set_chord(next.chord());
+    }
+    // Overlay position and visibility are ours to apply immediately.
+    apply_overlay(&app, next.overlay);
+
+    // Turning cleanup on or off means starting or stopping a sidecar holding
+    // gigabytes of VRAM, which cannot be done from under the pipeline thread.
+    if next.cleanup != previous.cleanup {
+        let _ = app.emit(
+            "paraflow://notice",
+            "Restart ParaFlow to apply the cleanup change.",
+        );
+    }
+    Ok(())
+}
+
+/// Begin reading a chord for the settings screen.
+///
+/// While this is active every keystroke is swallowed, so the capture field can
+/// see combinations like Ctrl+Alt+D without them reaching whatever is behind
+/// the window.
+#[tauri::command]
+fn start_hotkey_capture(app: tauri::AppHandle) {
+    let (tx, rx) = crossbeam_channel::unbounded::<hotkey::CaptureEvent>();
+    hotkey::begin_capture(tx);
+
+    std::thread::Builder::new()
+        .name("paraflow-capture".into())
+        .spawn(move || {
+            for event in rx.iter() {
+                match event {
+                    hotkey::CaptureEvent::Preview(keys) => {
+                        let names: Vec<String> = keys.iter().map(|k| hotkey::vk_name(*k)).collect();
+                        let _ = app.emit("paraflow://capture-preview", names);
+                    }
+                    hotkey::CaptureEvent::Done(keys) => {
+                        let names: Vec<String> = keys.iter().map(|k| hotkey::vk_name(*k)).collect();
+                        let _ = app.emit("paraflow://capture-done", names);
+                        return;
+                    }
+                }
+            }
+        })
+        .ok();
+}
+
+#[tauri::command]
+fn cancel_hotkey_capture() {
+    hotkey::cancel_capture();
+}
+
+#[tauri::command]
+fn open_dictionary_file(app: tauri::AppHandle) {
+    open_dictionary(&app);
+}
+
+/// Move or hide the overlay to match the setting.
+fn apply_overlay(app: &tauri::AppHandle, overlay: settings::Overlay) {
+    let Some(w) = app.get_webview_window("hud") else { return };
+    match overlay {
+        settings::Overlay::Hidden => {
+            let _ = w.hide();
+        }
+        settings::Overlay::Bottom => {
+            let _ = w.show();
+            place_hud(app, HudSpot::Bottom);
+        }
+        settings::Overlay::Top => {
+            let _ = w.show();
+            place_hud(app, HudSpot::Top);
+        }
+        settings::Overlay::Centre => {
+            let _ = w.show();
+            place_hud(app, HudSpot::Centre);
+        }
+    }
+}
+
+/// Open (or focus) the settings window.
+///
+/// A separate window rather than a mode of the HUD: the HUD is click-through
+/// and never focused, because an overlay that takes focus receives its own
+/// paste. Settings needs both.
+fn open_settings_window(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return;
+    }
+    match tauri::WebviewWindowBuilder::new(
+        app,
+        "settings",
+        tauri::WebviewUrl::App("index.html?view=settings".into()),
+    )
+    .title("ParaFlow Settings")
+    .inner_size(560.0, 640.0)
+    .resizable(true)
+    .center()
+    .build()
+    {
+        Ok(w) => {
+            let _ = w.set_focus();
+        }
+        Err(e) => tracing::error!(error = %e, "could not open settings window"),
+    }
 }
 
 /// Bring up the cleanup sidecar, or carry on without it.
@@ -309,8 +448,8 @@ fn start_pipeline(app: tauri::AppHandle) -> Result<()> {
 /// missing model or a failed launch downgrades to raw transcripts rather than
 /// taking the app down.
 fn start_polish() -> Option<Polish> {
-    if std::env::var("PARAFLOW_NO_CLEANUP").is_ok() {
-        tracing::info!("cleanup pass disabled by PARAFLOW_NO_CLEANUP");
+    if !settings::current().effective_cleanup() {
+        tracing::info!("cleanup pass disabled in settings");
         return None;
     }
 
@@ -354,6 +493,8 @@ fn start_polish() -> Option<Polish> {
 fn build_tray(app: &tauri::AppHandle) -> Result<()> {
     use tauri::menu::{PredefinedMenuItem, Submenu};
 
+    let settings_item =
+        MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let show = MenuItem::with_id(app, "show", "Show overlay", true, None::<&str>)?;
 
     let pos = Submenu::with_items(
@@ -374,6 +515,8 @@ fn build_tray(app: &tauri::AppHandle) -> Result<()> {
     let menu = Menu::with_items(
         app,
         &[
+            &settings_item,
+            &PredefinedMenuItem::separator(app)?,
             &show,
             &pos,
             &PredefinedMenuItem::separator(app)?,
@@ -393,9 +536,18 @@ fn build_tray(app: &tauri::AppHandle) -> Result<()> {
             let id = event.id.as_ref();
             if let Some(spot) = HudSpot::from_id(id) {
                 place_hud(app, spot);
+                // Persist, so the choice survives a restart rather than
+                // silently reverting and looking broken.
+                let mut s = settings::current();
+                s.overlay = spot.as_setting();
+                settings::set_current(s.clone());
+                if let Err(e) = s.save() {
+                    tracing::warn!(error = %e, "could not save overlay position");
+                }
                 return;
             }
             match id {
+                "settings" => open_settings_window(app),
                 "show" => {
                     if let Some(w) = app.get_webview_window("hud") {
                         let _ = w.show();

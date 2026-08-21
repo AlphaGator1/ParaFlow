@@ -28,11 +28,20 @@ static CLOSED: OnceCell<&'static [u8]> = OnceCell::new();
 
 /// Rising pair - the microphone is live, start talking.
 pub fn ready() {
+    if !crate::settings::current().chimes {
+        return;
+    }
     play(READY.get_or_init(|| chime(&[660.0, 990.0])));
 }
 
 /// Falling pair - the session ended and the microphone is released.
+///
+/// Suppressible, but worth thinking twice about turning off: this is the
+/// audible half of the promise that the microphone is not always listening.
 pub fn closed() {
+    if !crate::settings::current().chimes {
+        return;
+    }
     play(CLOSED.get_or_init(|| chime(&[880.0, 587.0])));
 }
 
