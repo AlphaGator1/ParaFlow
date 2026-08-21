@@ -7,12 +7,31 @@ no audio leaves the machine.
 A local-first take on [Wispr Flow](https://wisprflow.ai), which does the same job
 over the network for a subscription.
 
+Built for Windows 11 with an NVIDIA GPU. Works on AMD and Intel too, with a
+slower cleanup step.
+
+---
+
+## Install
+
+Download the installer from [Releases](../../releases) and run it. It is small;
+ParaFlow fetches the speech models it needs on first launch and tells you how
+big that is before starting.
+
+**Windows will warn you.** ParaFlow is not code-signed, so SmartScreen shows
+"Windows protected your PC" — choose *More info* → *Run anyway*. If that is not
+a trade you want to make, build it yourself: see *Building the installer*.
+
+Once installed, hold `Ctrl`+`Win`, speak, and let go. The full guide is in
+[docs/user-guide.html](docs/user-guide.html), and ships with the app.
+
 ---
 
 ## Status
 
-**Milestone 1 — end-to-end thin slice.** Hold `Ctrl`+`Win`, speak, release, text
-appears. The layers that carry the most risk are all real; polish is not.
+Working and in daily use. Everything below is real and measured on an RTX 5090;
+what is *not* done is in [NEXT.md](NEXT.md), which is deliberately candid about
+it.
 
 | | |
 |---|---|
@@ -86,7 +105,7 @@ npm run tauri build
 # -> src-tauri/target/release/bundle/nsis/ParaFlow_0.1.0_x64-setup.exe
 ```
 
-**2.7 MB.** Everything else arrives on first run.
+**2.8 MB.** Everything else arrives on first run.
 
 `installMode` is `perMachine` deliberately. Tauri's `currentUser` mode installs
 to `$LOCALAPPDATA\<productName>` — byte-for-byte the directory this app keeps
@@ -657,3 +676,26 @@ cd src-tauri; cargo test --lib
 side-agnostic modifier mapping (a transposed `VK_LCONTROL` once made the hotkey
 unpressable), ring-buffer marks surviving a wrap, resampling that keeps every
 sample it owes including the tail, and the cleanup guards.
+
+## Licence and credits
+
+ParaFlow itself is MIT — see [LICENSE](LICENSE).
+
+Nothing else is redistributed here. The inference runtimes and the speech models
+are downloaded from their own publishers on first launch, which keeps this repo
+small and means each component arrives under its own terms:
+
+| component | what it does | licence |
+|---|---|---|
+| [parakeet.cpp](https://github.com/mudler/parakeet.cpp) | transcription runtime | MIT |
+| [llama.cpp](https://github.com/ggml-org/llama.cpp) | cleanup runtime | MIT |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | optional fallback runtime | MIT |
+| [Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) | speech recognition model, by NVIDIA | CC-BY-4.0 |
+| [Qwen3-4B-Instruct-2507](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507) | cleanup model, by Alibaba Qwen | Apache-2.0 |
+
+The Parakeet model is CC-BY-4.0, which asks for attribution — hence this table,
+and the credit in the app's own guide.
+
+Not affiliated with [Wispr Flow](https://wisprflow.ai). ParaFlow was written
+because that tool is good and sends your voice to a server; this one does the
+same job without the network and without a subscription.

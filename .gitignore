@@ -14,3 +14,6 @@ models/
 src-tauri/icons/ios/
 src-tauri/icons/android/
 src-tauri/icons/*.icns
+
+# Working notes, kept out of the published repo.
+NEXT.md
