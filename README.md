@@ -79,6 +79,31 @@ are skipped, so re-running setup is cheap.
 `PARAFLOW_FORCE_SETUP=1` shows the screen on a machine that is already set up,
 which is the only way to look at it after the first run. It deletes nothing.
 
+### Building the installer
+
+```powershell
+npm run tauri build
+# -> src-tauri/target/release/bundle/nsis/ParaFlow_0.1.0_x64-setup.exe
+```
+
+**2.7 MB.** Everything else arrives on first run.
+
+`installMode` is `perMachine` deliberately. Tauri's `currentUser` mode installs
+to `$LOCALAPPDATA\<productName>` — byte-for-byte the directory this app keeps
+models, runtimes and the dictionary in. That is not destructive (the
+uninstaller uses a non-recursive `RMDir`, which a populated `models/` blocks)
+but it leaves `paraflow.exe` sitting among gigabytes of weights, and an
+uninstall leaves an orphaned data folder with no app in it. `perMachine`
+installs to `Program Files` and keeps the two apart, at the cost of one
+elevation prompt.
+
+Data deliberately survives an uninstall, so reinstalling does not re-download
+several gigabytes. To remove it too:
+
+```powershell
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\ParaFlow"
+```
+
 ### Packaging
 
 `tauri.conf.json` deliberately declares **no `resources`**. Bundling `vendor/`
