@@ -98,6 +98,18 @@ const CASES: &[(&str, Style, &str, &str)] = &[
         "The weather is lovely today and the coffee is good.",
         "MUST NOT sprinkle in dictionary terms that were never said",
     ),
+    (
+        "dictionary, real mishearing",
+        Style::Prose,
+        "I was using clawed code to write the installer this morning.",
+        "\"clawed code\" -> \"Claude Code\"; observed in use, not invented",
+    ),
+    (
+        "dictionary near-miss (adversarial)",
+        Style::Prose,
+        "The cat clawed the sofa and then sat on the keyboard.",
+        "MUST stay \"clawed\" - a dictionary term must not eat an ordinary word",
+    ),
     // --- hands-free -------------------------------------------------------
     (
         "two-minute hands-free recording",
@@ -152,7 +164,7 @@ the timeline still looks fine, the only thing that genuinely worries me is the \
 rollback story.";
 
 /// Terms fed to the model for this run, mirroring a user's dictionary.txt.
-const TEST_TERMS: &str = "Priya\nKubernetes\nParaFlow\nAnthropic\n";
+const TEST_TERMS: &str = "Priya\nKubernetes\nParaFlow\nAnthropic\nClaude\nClaude Code\n";
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("warn").init();
