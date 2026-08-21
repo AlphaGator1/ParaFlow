@@ -1,0 +1,16 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Vendored inference runtime and model weights - large binaries, fetched by
+# scripts/setup.ps1 rather than committed.
+vendor/
+models/
+*.zip
+
+# Icon variants for platforms this app does not target. Regenerate with
+# `npx tauri icon app-icon.png` if a port ever needs them.
+src-tauri/icons/ios/
+src-tauri/icons/android/
+src-tauri/icons/*.icns

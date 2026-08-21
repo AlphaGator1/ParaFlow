@@ -1,0 +1,340 @@
+# FlowState
+
+Push-to-talk dictation for Windows. Hold a key, speak, release — cleaned-up text
+lands at your cursor in whatever app has focus. Everything runs on your own GPU;
+no audio leaves the machine.
+
+A local-first take on [Wispr Flow](https://wisprflow.ai), which does the same job
+over the network for a subscription.
+
+---
+
+## Status
+
+**Milestone 1 — end-to-end thin slice.** Hold `Ctrl`+`Win`, speak, release, text
+appears. The layers that carry the most risk are all real; polish is not.
+
+| | |
+|---|---|
+| ✅ Push-to-talk hold detection | `WH_KEYBOARD_LL` — press *and* release |
+| ✅ Always-warm mic + 300 ms pre-roll | no device-open latency, no clipped first syllable |
+| ✅ Local GPU transcription | whisper.cpp + CUDA, model resident in VRAM |
+| ✅ Clipboard-preserving paste | works in Electron, terminals, browsers, native |
+| ✅ Live HUD | level meter, stage, measured latency, mic state |
+| ✅ **Full round trip verified** | 160 ms from key release to pasted text |
+| ✅ LLM cleanup pass | fillers, punctuation, self-corrections, lists |
+| ✅ On-demand microphone | opens on first press, closes when the burst ends |
+| ⬜ Personal dictionary | learn names and jargon from corrections |
+| ⬜ Per-app tone | a terminal is not an email |
+| ⬜ Hands-free latch | double-tap to lock on |
+| ⬜ Installer | see *Packaging*, below |
+
+### Packaging
+
+`tauri.conf.json` deliberately declares **no `resources`**. Bundling `vendor/`
+and `models/` copied 2.8 GB into `target/debug` on every dev run, and would put
+a 1.6 GB model inside the installer.
+
+The intended shape instead: ship the app plus the whisper.cpp runtime, and pull
+model weights on first launch into `%LOCALAPPDATA%\FlowState\models\`. Until
+that exists, `resolve()` in `lib.rs` walks up from the executable and finds the
+project-root `vendor/` and `models/` directories, so development works as-is
+and `npm run tauri build` produces an app that must be run from the repo.
+
+## Requirements
+
+- Windows 10/11 x64
+- NVIDIA GPU (optional — falls back to CPU, which is fine for short utterances
+  on a many-core part)
+- Node 20+, Rust 1.77+, and MSVC build tools + Windows SDK
+
+## Setup
+
+```powershell
+npm install
+./scripts/setup.ps1
+npm run tauri dev
+```
+
+`setup.ps1` fetches the inference runtime and model weights (~2.5 GB). They are
+not in version control.
+
+`setup.ps1 -NoCleanup` skips the cleanup model if you only want raw dictation.
+
+### Configuration
+
+All optional, read at startup:
+
+| variable | default | meaning |
+|---|---|---|
+| `FLOWSTATE_MODEL` | `ggml-large-v3-turbo.bin` | transcription model in `models/` |
+| `FLOWSTATE_CLEANUP_MODEL` | `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | cleanup model |
+| `FLOWSTATE_NO_CLEANUP` | unset | set to anything to paste raw transcripts |
+| `FLOWSTATE_IDLE_SECS` | `30` | idle time before the mic is released |
+| `FLOWSTATE_LOG` | `flowstate_lib=debug,info` | tracing filter |
+
+```powershell
+$env:FLOWSTATE_IDLE_SECS = "60"; npm run tauri dev
+```
+
+---
+
+## Architecture
+
+```
+  ┌────────────────────────────────────────────────────────────────┐
+  │  hotkey thread          WH_KEYBOARD_LL hook + message pump     │
+  │                         forwards PttEvent::{Down,Up} only      │
+  └───────────────────────────────┬────────────────────────────────┘
+                                  │  crossbeam channel
+  ┌───────────────────────────────▼────────────────────────────────┐
+  │  pipeline thread                                               │
+  │                                                                │
+  │   MicSession ────── opens on the first press of a burst,       │
+  │        │            closes after 30 s idle. 120 s ring buffer;  │
+  │        │            mark() reaches back 300 ms for pre-roll     │
+  │        ▼                                                       │
+  │   resample ──────── rubato FFT, device rate → 16 kHz mono      │
+  │        ▼                                                       │
+  │   noise gate ────── discard buffers under the noise floor      │
+  │        ▼                                                       │
+  │   Asr ───────────── HTTP → whisper-server    (1.6 GB VRAM)     │
+  │        ▼                                                       │
+  │   Polish ────────── HTTP → llama-server      (2.8 GB VRAM)     │
+  │        │            fillers, punctuation, self-corrections;     │
+  │        │            falls back to the raw transcript always     │
+  │        ▼                                                       │
+  │   inject ────────── save clipboard → set → Ctrl+V → restore    │
+  └───────────────────────────────┬────────────────────────────────┘
+                                  │  Tauri events
+  ┌───────────────────────────────▼────────────────────────────────┐
+  │  HUD (React)            transparent, always-on-top, never       │
+  │                         focused — focus would eat the paste     │
+  │                         LIVE/OFF badge reflects the mic         │
+  └────────────────────────────────────────────────────────────────┘
+```
+
+### Sessions: when the microphone is actually on
+
+An always-open microphone is the lowest-latency design and the wrong one for a
+tool used in bursts — it leaves the capture light on all day. So the device is
+opened lazily and released again:
+
+```
+  closed ──first press──► opening ──chime──► LIVE ──30 s idle──► closed
+                           ~150 ms            ▲   │
+                                              └───┘
+                                          further presses:
+                                        instant, with pre-roll
+```
+
+Only the first press of a burst pays the device-open cost, and a rising chime
+marks the moment it is safe to speak (a falling one marks the mic being
+released). Recording starts *after* the chime so the beep never reaches the
+recogniser. `FLOWSTATE_IDLE_SECS` tunes the timeout.
+
+The OS microphone indicator is therefore an honest signal, and the HUD's
+`LIVE`/`OFF` badge mirrors it.
+
+### Why these choices
+
+**Not `RegisterHotKey`.** Tauri's `global-shortcut` plugin wraps it, and it only
+reports a *press*. Push-to-talk needs the release too, so the app installs a
+low-level keyboard hook and watches raw transitions. The hook thread does nothing
+but forward events — Windows silently uninstalls hooks that block for too long.
+
+**The mic is never closed.** Opening a capture device costs 100–300 ms, which
+would land in the middle of the latency budget. The stream opens once at startup
+and every sample flows into a ring buffer, so starting a recording is just
+noting an offset. This also gives pre-roll for free: `mark()` reaches back 300 ms,
+so the syllable that beat your keystroke is already captured.
+
+**The model never unloads.** Cold-loading `large-v3-turbo` takes ~840 ms. Paying
+that per utterance would dominate everything else, so whisper.cpp runs as a
+resident sidecar with the model in VRAM. It is assigned to a Windows job object,
+so it cannot outlive the app and strand 1.6 GB of VRAM.
+
+**Clipboard paste, not synthetic keystrokes.** Typing text character by character
+drops characters in apps that throttle input, breaks IME state, and is slow for
+long passages. Clipboard + `Ctrl`+`V` is atomic and works everywhere. The
+previous clipboard contents are restored afterwards.
+
+**Modifiers are explicitly released before pasting.** The app suppresses the Win
+key-up to stop the Start menu from opening, so the target app can still believe
+Win is held. Sending `Ctrl`+`V` on top of that would fire `Win`+`Ctrl`+`V`.
+
+**The HUD never takes focus.** It is configured `focus: false` and
+`pointer-events: none`. A window that steals focus would receive its own paste.
+
+**The cleanup pass fails open.** Every failure path — sidecar down, timeout,
+runaway output — returns the raw transcript. A stage that can lose the user's
+words is worse than no stage at all, so `Polish::apply` cannot return an error.
+
+### Making the cleanup model transcribe rather than answer
+
+The hard part of the cleanup pass is not punctuation, it is stopping a helpful
+model from *doing what the user said* instead of writing it down. Dictating
+"write a Python function that reverses a string" must produce that sentence.
+
+Measured on Qwen3-4B with exactly that transcript:
+
+| prompt shape | result |
+|---|---|
+| few-shot examples + bare input | ❌ wrote the function |
+| few-shot examples + `<transcript>`-delimited input | ✅ transcribed it |
+| delimited input, no few-shot examples | ❌ wrote the function |
+
+**Neither device is sufficient alone.** A bare user turn reads as an
+instruction however many counter-examples precede it; delimiters alone lack the
+demonstration of what "clean this up" means. Both are load-bearing, which is
+why `wrap()` and `FEW_SHOT` carry warnings not to remove them.
+
+Two independent guards catch it if the model does it anyway: runaway output
+length, and *vocabulary drift* — cleanup only deletes fillers and adds
+punctuation, so the output reuses nearly all the input's words, while a reply
+reuses almost none. The drift check is the one that matters: the failure above
+produced `def reverse_string(s): return s[::-1]`, almost exactly the same
+length as the input, so a length check alone sailed straight past it.
+
+### Measured on the development machine
+
+Ryzen 9 9950X3D · RTX 5090 (32 GB, `sm_120`) · Windows 11 · `large-v3-turbo`
+
+Full transcription of an 11.0 s speech sample, over the real HTTP path
+(`scripts/test-asr.ps1`):
+
+```
+  run 1     221 ms   cold — driver JIT
+  run 2      91 ms
+  run 3      90 ms
+  run 4      90 ms
+  ────────────────
+  warm mean  90 ms   122x realtime
+
+  sidecar ready   1212 ms   once, at startup
+  VRAM resident   1624 MB   5% of the card
+```
+
+A typical dictated sentence is 3–5 s, so transcription lands well under the
+~500 ms budget where push-to-talk stops feeling like a round trip and starts
+feeling like typing.
+
+End-to-end, measured on live speech (4.63 s utterance, 48 kHz stereo webcam mic):
+
+```
+  key release  →  capture + resample to 16 kHz     85.6 ms
+               →  GPU transcription                74.4 ms
+               →  LLM cleanup                     ~62.0 ms
+               ─────────────────────────────────────────
+                  release to pasted text          ~222 ms
+```
+
+### Run the release build
+
+`npm run tauri dev` builds the Rust side unoptimized, and the resampler is
+pathologically sensitive to it:
+
+```
+  resample 10.69 s of audio    debug   169.8 ms
+                               release   2.0 ms      86x
+```
+
+Transcription and cleanup are unaffected — those run inside the sidecar
+processes, which are optimized binaries either way — so a debug build shows a
+realistic GPU cost sitting behind an unrealistic capture cost. Measure latency
+with:
+
+```powershell
+npm run tauri dev -- --release
+```
+
+This was worth checking before optimizing: the resampler looked like the most
+expensive stage in the pipeline and is in fact ~1% of it.
+
+### Choosing the transcription model
+
+`scripts/test-asr.ps1` against an 11.0 s sample, warm:
+
+| model | size | warm latency | notes |
+|---|---|---|---|
+| **large-v3-turbo** *(default)* | 1549 MB | **99 ms** | correct punctuation |
+| small.en | 465 MB | 110 ms | *slower*, no accuracy gain |
+| base.en | 141 MB | 53 ms | drops commas; cleanup restores them |
+
+The counterintuitive result is that **an English-only model does not reduce
+latency** — `small.en` is slower than the multilingual default. large-v3-turbo
+is distilled down to 4 decoder layers where `small` has 12, and decoding
+dominates at utterance lengths. English-only operation comes from pinning
+`-l en`, which skips language detection, not from the model choice.
+
+`base.en` is a genuine option for a small install: it is 11× smaller and 46 ms
+faster, and the punctuation it drops is exactly what the cleanup pass adds back.
+It does make more word errors on difficult audio, which cleanup cannot fix.
+
+### Cleanup pass
+
+Qwen3-4B-Instruct Q4\_K\_M, 2.8 GB VRAM, over 9 cases in `examples/cleanup.rs`:
+
+```
+  mean 62 ms   (prompt cache makes the fixed prefix ~free)
+```
+
+Run it after any prompt or model change — two cases are adversarial and exist
+to catch the model answering instead of transcribing:
+
+```powershell
+cargo run --example cleanup
+```
+
+### A note on Blackwell
+
+The published whisper.cpp CUDA binaries target CUDA 12.4 and advertise
+`ARCHS = 500,610,700,750,800,860,890,900` — no `120`. They run correctly on
+RTX 50-series anyway, because the driver JIT-compiles the shipped `sm_90` PTX
+onto Blackwell. Worth re-checking after any upstream bump: a build that ships
+arch-specific cubins without PTX would break on these cards.
+
+That JIT is not free, and it is why `Asr::start` pushes a throwaway utterance
+through the model before accepting real ones. The very first inference on a
+fresh machine cost **1299 ms**; once the driver has cached the compiled kernels
+on disk, a cold process pays 221 ms and steady state is 90 ms. Warming up at
+startup moves that cost off the user's first dictation.
+
+This is also why the app does not use `faster-whisper`/CTranslate2, which
+crashes with `CUBLAS_STATUS_NOT_SUPPORTED` on `sm_120` for int8 and has to be
+forced to float16.
+
+---
+
+## Layout
+
+```
+src/                       HUD (React + TypeScript)
+src-tauri/src/
+  hotkey.rs                low-level keyboard hook, chord tracking
+  audio.rs                 on-demand capture, ring buffer, resampling, WAV
+  sound.rs                 session chimes
+  sidecar.rs               job-object lifetime, readiness probing
+  asr.rs                   whisper-server supervisor + client
+  polish.rs                llama-server supervisor, cleanup prompt, guards
+  inject.rs                clipboard save/restore, SendInput, focus target
+  pipeline.rs              session + utterance state machine
+  lib.rs                   tray, window, wiring
+src-tauri/examples/
+  cleanup.rs               cleanup quality harness (adversarial cases)
+scripts/setup.ps1          fetch runtimes + weights
+scripts/test-asr.ps1       ASR contract + latency, pins the HTTP shape
+vendor/                    whisper.cpp + llama.cpp binaries  (gitignored)
+models/                    ggml + gguf weights               (gitignored)
+```
+
+## Tests
+
+```powershell
+cd src-tauri; cargo test --lib
+```
+
+20 unit tests, weighted toward the things that failed silently in development:
+side-agnostic modifier mapping (a transposed `VK_LCONTROL` once made the hotkey
+unpressable), ring-buffer marks surviving a wrap, resampling that keeps every
+sample it owes including the tail, and the cleanup guards.
