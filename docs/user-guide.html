@@ -150,7 +150,10 @@
     margin: 0 0 6px;
     line-height: 1.25;
   }
-  h2 .num {
+  main { counter-reset: sec; }
+  section { counter-increment: sec; }
+  h2::before {
+    content: counter(sec);
     color: var(--accent);
     font-variant-numeric: tabular-nums;
     margin-right: 12px;
@@ -370,6 +373,7 @@
     <li><a href="#start">Getting started</a></li>
     <li><a href="#overlay">Reading the overlay</a></li>
     <li><a href="#microphone">When the mic is on</a></li>
+    <li><a href="#hands-free">Hands-free dictation</a></li>
     <li><a href="#cleanup">What cleanup does</a></li>
     <li><a href="#tone">Where you are typing</a></li>
     <li><a href="#dictionary">Personal dictionary</a></li>
@@ -386,7 +390,7 @@
 
 <!-- ================================================================= -->
 <section id="start">
-  <h2><span class="num">1</span>Getting started</h2>
+  <h2>Getting started</h2>
   <p class="standfirst">Click into whatever you want to write in, then:</p>
 
   <ol class="steps">
@@ -415,6 +419,12 @@
     </li>
   </ol>
 
+  <p>
+    For anything longer than a sentence or two, don't hold the key — tap it twice quickly and
+    ParaFlow keeps listening with nothing held down. See
+    <a href="#hands-free">Dictating more than a sentence</a>.
+  </p>
+
   <div class="note">
     <p><strong>Leave the cursor where you want the text.</strong> ParaFlow types into
     whichever window is in front at the moment it finishes. If you click into something else
@@ -442,7 +452,7 @@
 
 <!-- ================================================================= -->
 <section id="overlay">
-  <h2><span class="num">2</span>Reading the overlay</h2>
+  <h2>Reading the overlay</h2>
   <p class="standfirst">
     The small panel that appears near the edge of your screen is ParaFlow telling you what it
     is doing. It is worth learning to read, because it is also how you know the microphone
@@ -456,6 +466,7 @@
         <tr><td><strong>Ready</strong></td><td>Waiting for you. If the microphone happens to be open, it counts down to closing.</td></tr>
         <tr><td><strong>Opening mic…</strong></td><td>Turning the microphone on. Wait for the chime before you start talking.</td></tr>
         <tr><td><strong>Listening…</strong></td><td>Recording. Keep talking; release the key when you are done.</td></tr>
+        <tr><td><strong>Hands-free</strong></td><td>Recording with nothing held down, with a clock counting up. Press the combination once to finish. See <a href="#hands-free">Dictating more than a sentence</a>.</td></tr>
         <tr><td><strong>Transcribing…</strong></td><td>Turning your speech into text on your graphics card.</td></tr>
         <tr><td><strong>Cleaning up…</strong></td><td>Punctuating, removing fillers, applying your corrections.</td></tr>
         <tr><td><strong>Your text</strong></td><td>Done. It shows what it typed, and how long the whole thing took.</td></tr>
@@ -486,7 +497,7 @@
 
 <!-- ================================================================= -->
 <section id="microphone">
-  <h2><span class="num">3</span>When the microphone is actually on</h2>
+  <h2>When the microphone is actually on</h2>
   <p class="standfirst">
     A dictation app that quietly listens all day is not the deal. Here is exactly what
     ParaFlow does.
@@ -504,6 +515,9 @@
     <li><strong>It closes itself after 30 seconds</strong> of no dictation, and you hear the
       falling chime when it does. Change that timeout in Settings — anything from 5 seconds
       to an hour.</li>
+    <li><strong>Hands-free recording is the one case where it stays open while you are not
+      pressing anything</strong>, and it is also the one case with a hard two-minute ceiling.
+      See <a href="#hands-free">the next section</a>.</li>
     <li><strong>Very short taps are thrown away.</strong> Anything held for less than a
       quarter of a second is discarded rather than transcribed, so brushing the key does not
       produce stray text.</li>
@@ -522,8 +536,56 @@
 </section>
 
 <!-- ================================================================= -->
+<section id="hands-free">
+  <h2>Dictating more than a sentence</h2>
+  <p class="standfirst">
+    Holding a key down for two minutes is no way to write a paragraph. Tap your combination
+    twice quickly and ParaFlow keeps listening with nothing held down.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <strong>Tap the combination twice, quickly.</strong>
+      <span class="aside">Like a double-click. If it does not take, you were a little slow —
+      try again slightly faster.</span>
+    </li>
+    <li>
+      <strong>Let go and talk.</strong>
+      <span class="aside">The overlay changes to <em>Hands-free</em> with a clock counting up,
+      and its edge glows so it cannot be mistaken for idle.</span>
+    </li>
+    <li>
+      <strong>Press the combination once to finish.</strong>
+      <span class="aside">A single press. Everything you said is transcribed and typed in one
+      go.</span>
+    </li>
+  </ol>
+
+  <div class="note warn">
+    <p><strong>It stops itself after two minutes.</strong> The overlay counts down for the last
+    twenty seconds so it is never a surprise, and everything recorded up to that point is
+    transcribed and typed exactly as if you had pressed the key yourself. Nothing is thrown
+    away. Double-tap again to carry on.</p>
+    <p>That limit is deliberate. It is roughly how much audio ParaFlow holds in memory, and it
+    means a microphone left recording because somebody walked away turns itself off.</p>
+  </div>
+
+  <p>
+    Because cleanup sees the whole recording at once, dictating a long passage this way tends
+    to come out better than the same words in short bursts — it can punctuate across sentences
+    and lay out a dictated list properly.
+  </p>
+
+  <p>
+    If you find yourself latching by accident, turn it off: <strong>Settings → Push-to-talk
+    key → Double-tap to keep recording</strong>. With it off, the combination only ever works
+    press-and-hold.
+  </p>
+</section>
+
+<!-- ================================================================= -->
 <section id="cleanup">
-  <h2><span class="num">4</span>What cleanup does</h2>
+  <h2>What cleanup does</h2>
   <p class="standfirst">
     Speech and writing are not the same thing. If you installed ParaFlow with cleanup, a
     second pass turns one into the other before anything is typed.
@@ -595,7 +657,7 @@
 
 <!-- ================================================================= -->
 <section id="tone">
-  <h2><span class="num">5</span>It notices where you are typing</h2>
+  <h2>It notices where you are typing</h2>
   <p class="standfirst">
     A shell command and an email should not come out looking the same. Cleanup checks which
     application is in front and matches it.
@@ -637,7 +699,7 @@
 
 <!-- ================================================================= -->
 <section id="dictionary">
-  <h2><span class="num">6</span>Teaching it your words</h2>
+  <h2>Teaching it your words</h2>
   <p class="standfirst">
     Colleagues' names, product names, acronyms, library names — the words a general-purpose
     recogniser has never met. Write them down once and ParaFlow will spell them your way.
@@ -670,7 +732,7 @@
 
 <!-- ================================================================= -->
 <section id="settings">
-  <h2><span class="num">7</span>Settings</h2>
+  <h2>Settings</h2>
   <p class="standfirst">
     Click the ParaFlow icon in the system tray and choose <strong>Settings…</strong>. Changes take
     effect when you press <strong>Save settings</strong>.
@@ -683,6 +745,11 @@
         <tr>
           <td><strong>Push-to-talk key</strong></td>
           <td>The combination you hold to dictate. See <a href="#hotkey">the next section</a>.</td>
+        </tr>
+        <tr>
+          <td><strong>Double-tap to keep recording</strong></td>
+          <td><a href="#hands-free">Hands-free dictation</a>. Switch it off if you find
+            yourself latching by accident; the combination then only works press-and-hold.</td>
         </tr>
         <tr>
           <td><strong>Overlay</strong></td>
@@ -717,7 +784,7 @@
 
 <!-- ================================================================= -->
 <section id="hotkey">
-  <h2><span class="num">8</span>Changing the push-to-talk key</h2>
+  <h2>Changing the push-to-talk key</h2>
 
   <ol class="steps">
     <li><strong>Settings → Push-to-talk key → Change…</strong></li>
@@ -746,7 +813,7 @@
 
 <!-- ================================================================= -->
 <section id="trouble">
-  <h2><span class="num">9</span>If something goes wrong</h2>
+  <h2>If something goes wrong</h2>
 
   <div class="table-wrap">
     <table class="wide">
@@ -774,6 +841,18 @@
           <td><strong>The beginning of my sentence is missing.</strong></td>
           <td>Wait for the rising chime before you start speaking. ParaFlow keeps a fraction
             of a second of audio from before you pressed, but not more than that.</td>
+        </tr>
+        <tr>
+          <td><strong>It started recording hands-free when I did not mean it to.</strong></td>
+          <td>Two ordinary presses close together read as a double-tap. Press once to stop, or
+            switch the whole thing off in <strong>Settings → Double-tap to keep
+            recording</strong>.</td>
+        </tr>
+        <tr>
+          <td><strong>My double-tap does not latch.</strong></td>
+          <td>Tap a little faster. ParaFlow uses your Windows double-click speed, so if you
+            have set that very short you have a very short window; Settings → Bluetooth &amp;
+            devices → Mouse → Additional mouse settings adjusts it.</td>
         </tr>
         <tr>
           <td><strong>I did not hear a chime.</strong></td>
@@ -807,7 +886,7 @@
 
 <!-- ================================================================= -->
 <section id="privacy">
-  <h2><span class="num">10</span>Your privacy</h2>
+  <h2>Your privacy</h2>
 
   <ul>
     <li><strong>Nothing is uploaded.</strong> There is no account, no sign-in and no
@@ -825,7 +904,7 @@
 
 <!-- ================================================================= -->
 <section id="files">
-  <h2><span class="num">11</span>Where things are kept</h2>
+  <h2>Where things are kept</h2>
 
   <div class="table-wrap">
     <table>
@@ -853,7 +932,7 @@
 
 <!-- ================================================================= -->
 <section id="uninstall">
-  <h2><span class="num">12</span>Uninstalling</h2>
+  <h2>Uninstalling</h2>
   <p>
     Windows Settings → Apps → Installed apps → ParaFlow → Uninstall. ParaFlow adds nothing to
     your startup items and makes no system-wide changes, so removing the program is clean.

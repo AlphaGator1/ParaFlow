@@ -34,6 +34,19 @@ const NOISE_FLOOR: f32 = 0.003;
 /// How often the loop wakes to check whether the session has gone idle.
 const TICK: Duration = Duration::from_millis(500);
 
+/// How long a hands-free recording may run before it stops itself.
+///
+/// Bounded by the capture ring rather than by taste. [`audio::RING_SECONDS`]
+/// of audio is kept, and `Ring::slice` clamps to what is still resident rather
+/// than erroring - so a latch that outran the ring would silently lose its own
+/// beginning and nobody would be told. Stopping short of that, with the
+/// countdown visible on the overlay for the last stretch, is the honest
+/// version of the same limit.
+///
+/// It doubles as a safety net: a latched microphone left running because
+/// somebody walked away shuts itself off.
+const MAX_LATCHED: Duration = Duration::from_secs(120);
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Stage {
@@ -41,6 +54,11 @@ pub enum Stage {
     /// The microphone is being opened - first press of a burst.
     Waking,
     Listening,
+    /// Recording hands-free. The key is not held; only a press stops it.
+    Latched {
+        elapsed_s: u64,
+        remaining_s: u64,
+    },
     Transcribing,
     Polishing,
     Done {
@@ -50,6 +68,22 @@ pub enum Stage {
     Error {
         message: String,
     },
+}
+
+/// The utterance in progress.
+///
+/// `latched` lives here rather than beside it so the two cannot disagree:
+/// there is no state in which the pipeline believes it is latched but has no
+/// recording, which is what the idle sweep relies on to leave the microphone
+/// alone.
+struct Active {
+    /// Ring offset recording started from.
+    start: u64,
+    /// When capture began - the latency figure and the latch ceiling both
+    /// measure from here.
+    began: Instant,
+    /// True when recording is latched on rather than key-held.
+    latched: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -102,75 +136,79 @@ impl Pipeline {
 
     /// Consume push-to-talk events until the channel closes.
     pub fn run(mut self, rx: Receiver<PttEvent>) {
-        let mut mark: Option<u64> = None;
-        let mut began = Instant::now();
+        let mut active: Option<Active> = None;
         let mut last_activity = Instant::now();
         let listening = Arc::new(AtomicBool::new(false));
 
         self.emit(Stage::Idle);
         self.emit_mic(Duration::ZERO);
+        let settings = crate::settings::current();
         tracing::info!(
             asr = ?self.asr.backend(),
             cleanup = self.polish.is_some(),
-            idle_timeout_s = crate::settings::current().effective_idle().as_secs(),
+            idle_timeout_s = settings.effective_idle().as_secs(),
+            hands_free = settings.effective_hands_free(),
             "pipeline ready; microphone stays closed until first use"
         );
 
         loop {
             match rx.recv_timeout(TICK) {
                 Ok(PttEvent::Down) => {
-                    if mark.is_some() {
-                        continue; // already recording; ignore key repeat
-                    }
-                    match self.begin_utterance() {
-                        Ok(start) => {
-                            mark = Some(start);
-                            began = Instant::now();
-                            listening.store(true, Ordering::Relaxed);
-                            self.emit(Stage::Listening);
-                            self.spawn_level_meter(start, listening.clone());
+                    if let Some(a) = active.take() {
+                        // A press while latched is the stop signal. Anything
+                        // else is a key repeat inside a held utterance.
+                        if a.latched {
+                            self.finish(a, &listening, &mut last_activity);
+                        } else {
+                            active = Some(a);
                         }
-                        Err(e) => {
-                            tracing::error!(error = %e, "could not start listening");
-                            self.emit(Stage::Error { message: e.to_string() });
-                        }
+                        continue;
                     }
+                    active = self.start_utterance(false, &listening);
                 }
 
                 Ok(PttEvent::Up) => {
-                    listening.store(false, Ordering::Relaxed);
-                    let Some(start) = mark.take() else { continue };
-                    last_activity = Instant::now();
-
-                    let held = began.elapsed().as_millis();
-                    tracing::info!(held, "push-to-talk up");
-                    if held < MIN_UTTERANCE_MS {
-                        tracing::info!(held, min = MIN_UTTERANCE_MS, "ignoring tap: too short");
-                        self.emit(Stage::Idle);
+                    // Latched recording ignores the key entirely - that is the
+                    // whole point of it.
+                    if active.as_ref().is_some_and(|a| a.latched) {
                         continue;
                     }
-
-                    match self.handle_utterance(start, began) {
-                        Ok(Some(stage)) => self.emit(stage),
-                        Ok(None) => self.emit(Stage::Idle),
-                        Err(e) => {
-                            tracing::error!(error = %e, "dictation failed");
-                            self.emit(Stage::Error { message: e.to_string() });
-                        }
-                    }
-                    // Transcription can take a moment; the idle clock should
-                    // start from when we finished, not when the key came up.
-                    last_activity = Instant::now();
-                    self.emit_mic(crate::settings::current().effective_idle());
+                    let Some(a) = active.take() else { continue };
+                    self.finish(a, &listening, &mut last_activity);
                 }
 
                 Ok(PttEvent::ToggleLatch) => {
-                    // Hands-free mode is a later milestone.
+                    if let Some(a) = active.take() {
+                        self.finish(a, &listening, &mut last_activity);
+                        continue;
+                    }
+                    active = self.start_utterance(true, &listening);
                 }
 
                 Err(RecvTimeoutError::Timeout) => {
-                    // Idle sweep. Never close mid-utterance.
-                    if self.mic.is_open() && mark.is_none() {
+                    // Mid-utterance the microphone is in use, so the idle sweep
+                    // has nothing to do. A latched recording still has its own
+                    // ceiling to watch.
+                    if let Some(a) = active.take() {
+                        if !a.latched {
+                            active = Some(a);
+                            continue;
+                        }
+                        let elapsed = a.began.elapsed();
+                        if elapsed >= MAX_LATCHED {
+                            tracing::info!(
+                                secs = elapsed.as_secs(),
+                                "hands-free hit its ceiling; stopping and transcribing"
+                            );
+                            self.finish(a, &listening, &mut last_activity);
+                        } else {
+                            self.emit(latched_stage(elapsed));
+                            active = Some(a);
+                        }
+                        continue;
+                    }
+
+                    if self.mic.is_open() {
                         // Read per sweep rather than caching, so changing the
                         // timeout in settings takes effect immediately.
                         let limit = crate::settings::current().effective_idle();
@@ -186,6 +224,64 @@ impl Pipeline {
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
+    }
+
+    /// Open the microphone if needed and start recording. Returns `None` when
+    /// the microphone could not be opened, having already reported it.
+    fn start_utterance(&mut self, latched: bool, listening: &Arc<AtomicBool>) -> Option<Active> {
+        match self.begin_utterance() {
+            Ok(start) => {
+                listening.store(true, Ordering::Relaxed);
+                if latched {
+                    crate::hotkey::set_latched(true);
+                    tracing::info!(ceiling_s = MAX_LATCHED.as_secs(), "hands-free engaged");
+                    self.emit(latched_stage(Duration::ZERO));
+                } else {
+                    self.emit(Stage::Listening);
+                }
+                self.spawn_level_meter(start, listening.clone());
+                Some(Active { start, began: Instant::now(), latched })
+            }
+            Err(e) => {
+                tracing::error!(error = %e, latched, "could not start listening");
+                self.emit(Stage::Error { message: e.to_string() });
+                None
+            }
+        }
+    }
+
+    /// End the utterance: transcribe, clean up and paste, or discard a tap.
+    fn finish(&mut self, a: Active, listening: &Arc<AtomicBool>, last_activity: &mut Instant) {
+        listening.store(false, Ordering::Relaxed);
+        if a.latched {
+            // Cleared before the slow work below, not after. While it is set
+            // the hook turns every press into a stop, so a press arriving
+            // during transcription would be swallowed instead of starting the
+            // next dictation.
+            crate::hotkey::set_latched(false);
+        }
+        *last_activity = Instant::now();
+
+        let held = a.began.elapsed().as_millis();
+        tracing::info!(held, latched = a.latched, "utterance ended");
+        if held < MIN_UTTERANCE_MS {
+            tracing::info!(held, min = MIN_UTTERANCE_MS, "ignoring tap: too short");
+            self.emit(Stage::Idle);
+            return;
+        }
+
+        match self.handle_utterance(a.start, a.began) {
+            Ok(Some(stage)) => self.emit(stage),
+            Ok(None) => self.emit(Stage::Idle),
+            Err(e) => {
+                tracing::error!(error = %e, "dictation failed");
+                self.emit(Stage::Error { message: e.to_string() });
+            }
+        }
+        // Transcription can take a moment; the idle clock should start from
+        // when we finished, not when the key came up.
+        *last_activity = Instant::now();
+        self.emit_mic(crate::settings::current().effective_idle());
     }
 
     /// Open the microphone if this is the first press of a burst, and return
@@ -283,8 +379,8 @@ impl Pipeline {
         Ok(Some(Stage::Done { text, latency_ms: began.elapsed().as_millis() }))
     }
 
-    /// Feed the overlay a peak level while the key is held, so the UI can show
-    /// the mic is actually hearing something.
+    /// Feed the overlay a peak level while recording, so the UI can show the
+    /// mic is actually hearing something.
     fn spawn_level_meter(&self, mark: u64, listening: Arc<AtomicBool>) {
         let Some(probe) = self.mic.probe() else { return };
         let app = self.app.clone();
@@ -296,5 +392,69 @@ impl Pipeline {
             // Settle the meter back to zero so the overlay does not freeze mid-bar.
             let _ = app.emit("flow://level", LevelEvent { peak: 0.0 });
         });
+    }
+}
+
+/// The latched stage as the overlay should see it, with the ceiling counted
+/// down rather than hidden. A hands-free recording that stops without warning
+/// looks like a crash.
+fn latched_stage(elapsed: Duration) -> Stage {
+    Stage::Latched {
+        elapsed_s: elapsed.as_secs(),
+        remaining_s: MAX_LATCHED.saturating_sub(elapsed).as_secs(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The one invariant the latch cannot survive losing.
+    ///
+    /// `Ring::slice` clamps to whatever is still resident instead of failing,
+    /// so if the ceiling ever crept past the ring the only symptom would be
+    /// transcripts quietly missing their first sentence.
+    #[test]
+    fn the_latch_ceiling_stays_inside_the_capture_ring() {
+        let ceiling = MAX_LATCHED.as_secs();
+        let ring = audio::RING_SECONDS as u64;
+        assert!(
+            ceiling < ring,
+            "latch ceiling {ceiling}s must fit in the {ring}s ring"
+        );
+        // Room for the pre-roll and for the gap between hitting the ceiling on
+        // a 500ms tick and actually reading the samples out.
+        assert!(
+            ring - ceiling >= 10,
+            "only {}s of headroom between the ceiling and the ring",
+            ring - ceiling
+        );
+    }
+
+    #[test]
+    fn the_countdown_reaches_zero_exactly_at_the_ceiling() {
+        let Stage::Latched { elapsed_s, remaining_s } = latched_stage(Duration::ZERO) else {
+            panic!("expected a latched stage");
+        };
+        assert_eq!(elapsed_s, 0);
+        assert_eq!(remaining_s, MAX_LATCHED.as_secs());
+
+        let Stage::Latched { remaining_s, .. } = latched_stage(MAX_LATCHED) else {
+            panic!("expected a latched stage");
+        };
+        assert_eq!(remaining_s, 0);
+    }
+
+    #[test]
+    fn the_countdown_does_not_underflow_past_the_ceiling() {
+        // The sweep runs on a 500ms tick, so `elapsed` is always a little past
+        // the ceiling by the time it is noticed. Duration subtraction panics
+        // on underflow, which would take the pipeline thread down with it.
+        let Stage::Latched { remaining_s, .. } =
+            latched_stage(MAX_LATCHED + Duration::from_secs(30))
+        else {
+            panic!("expected a latched stage");
+        };
+        assert_eq!(remaining_s, 0);
     }
 }

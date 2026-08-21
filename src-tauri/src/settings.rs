@@ -62,6 +62,9 @@ pub struct Settings {
     pub cleanup: bool,
     /// Play the rising/falling chimes when a session opens and closes.
     pub chimes: bool,
+    /// Double-tap the chord to lock recording on until the next press. Off
+    /// means the chord only ever works press-and-hold.
+    pub hands_free: bool,
 }
 
 impl Default for Settings {
@@ -72,6 +75,7 @@ impl Default for Settings {
             idle_seconds: 30,
             cleanup: true,
             chimes: true,
+            hands_free: true,
         }
     }
 }
@@ -154,6 +158,14 @@ impl Settings {
         }
         self.cleanup
     }
+
+    /// Whether double-tap latching is armed, with the environment override.
+    pub fn effective_hands_free(&self) -> bool {
+        if std::env::var("PARAFLOW_NO_LATCH").is_ok() {
+            return false;
+        }
+        self.hands_free
+    }
 }
 
 #[cfg(test)]
@@ -166,7 +178,19 @@ mod tests {
         assert_eq!(s.chord().label(), "Ctrl + Win");
         assert_eq!(s.idle_seconds, 30);
         assert!(s.cleanup);
+        assert!(s.hands_free);
         assert_eq!(s.overlay, Overlay::Bottom);
+    }
+
+    #[test]
+    fn a_settings_file_written_before_the_latch_existed_still_gets_it() {
+        // `#[serde(default)]` fills the field in rather than refusing to parse,
+        // so upgrading does not silently reset someone's whole configuration.
+        let s: Settings =
+            serde_json::from_str(r#"{"hotkey":["Ctrl","Alt"],"idleSeconds":45}"#).unwrap();
+        assert_eq!(s.chord().label(), "Ctrl + Alt");
+        assert_eq!(s.idle_seconds, 45);
+        assert!(s.hands_free, "new setting takes its default");
     }
 
     #[test]
@@ -206,6 +230,7 @@ mod tests {
             idle_seconds: 45,
             cleanup: false,
             chimes: false,
+            hands_free: false,
         };
         let text = serde_json::to_string(&original).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
@@ -214,5 +239,6 @@ mod tests {
         assert_eq!(back.idle_seconds, 45);
         assert!(!back.cleanup);
         assert!(!back.chimes);
+        assert!(!back.hands_free);
     }
 }

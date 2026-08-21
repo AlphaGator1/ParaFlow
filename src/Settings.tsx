@@ -12,6 +12,7 @@ type Settings = {
   idleSeconds: number;
   cleanup: boolean;
   chimes: boolean;
+  handsFree: boolean;
 };
 
 const OVERLAY_LABELS: Record<Overlay, string> = {
@@ -225,6 +226,22 @@ export default function Settings() {
             Change…
           </button>
         )}
+
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={s.handsFree}
+            onChange={(e) => update("handsFree", e.target.checked)}
+          />
+          <span>
+            Double-tap to keep recording, hands-free
+            <em>
+              Tap {s.hotkey.join(" + ")} twice quickly and it keeps listening until you press it
+              again — for dictating more than a sentence or two without holding anything down. It
+              stops on its own after two minutes, and the overlay counts down to it.
+            </em>
+          </span>
+        </label>
       </section>
 
       {/* --- overlay -------------------------------------------------- */}

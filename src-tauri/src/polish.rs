@@ -29,10 +29,31 @@ use crate::sidecar;
 const PORT: u16 = 8179;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Hard ceiling on the cleanup request. This sits directly in the path between
-/// the user releasing the key and text appearing, so a slow answer is worth
-/// less than a fast raw transcript.
-const REQUEST_TIMEOUT: Duration = Duration::from_millis(2500);
+/// Absolute ceiling on one cleanup request, whatever its size.
+const MAX_REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Ceiling on generated tokens.
+///
+/// Only a runaway guard - the real bound is proportional to the input, since a
+/// cleaned utterance is never much longer than the original.
+///
+/// Raised from 512 when hands-free recording arrived. Measured: the harness's
+/// two-minute case cleans to 2351 characters, which fits inside 512 tokens
+/// with essentially nothing to spare, and someone talking faster for the full
+/// [`crate::pipeline::MAX_LATCHED`] would not fit. A ceiling with no headroom
+/// is not a safety margin.
+const MAX_OUTPUT_TOKENS: usize = 1536;
+
+/// Budget for one cleanup request, given how much output is expected.
+///
+/// A flat ceiling was right while every utterance was a sentence: waiting
+/// three seconds to punctuate one line is worse than pasting the raw
+/// transcript. Hands-free recording inverts the trade - after two minutes of
+/// dictation a few more seconds is cheap, and quietly losing cleanup on
+/// exactly the utterances that need it most is not.
+fn request_timeout(max_tokens: usize) -> Duration {
+    Duration::from_millis(1_200 + max_tokens as u64 * 6).min(MAX_REQUEST_TIMEOUT)
+}
 
 #[derive(Debug, Clone)]
 pub struct PolishConfig {
@@ -108,7 +129,9 @@ impl Polish {
         // load, 200 once it can serve.
         sidecar::await_ready("llama-server", PORT, "/health", STARTUP_TIMEOUT, &mut child)?;
 
-        let client = reqwest::blocking::Client::builder().timeout(REQUEST_TIMEOUT).build()?;
+        // Per-request timeouts do the real work; this is only a backstop for a
+        // connection that hangs without producing tokens.
+        let client = reqwest::blocking::Client::builder().timeout(MAX_REQUEST_TIMEOUT).build()?;
         let endpoint = format!("http://127.0.0.1:{PORT}/v1/chat/completions");
 
         if !config.dictionary.is_empty() {
@@ -167,7 +190,7 @@ impl Polish {
     fn request(&self, raw: &str, style: Style) -> Result<String> {
         // Roughly: a cleaned utterance is never much longer than the original,
         // so this both bounds latency and stops a runaway generation.
-        let max_tokens = (raw.len() / 2 + 64).min(512);
+        let max_tokens = (raw.len() / 2 + 64).min(MAX_OUTPUT_TOKENS);
 
         let mut messages = vec![json!({"role": "system", "content": self.system})];
         for (example_style, spoken, written) in FEW_SHOT {
@@ -187,10 +210,28 @@ impl Polish {
             "cache_prompt": true,
         });
 
-        let resp = self.client.post(&self.endpoint).json(&body).send()?;
+        let resp = self
+            .client
+            .post(&self.endpoint)
+            .timeout(request_timeout(max_tokens))
+            .json(&body)
+            .send()?;
         anyhow::ensure!(resp.status().is_success(), "cleanup returned {}", resp.status());
 
         let v: serde_json::Value = resp.json()?;
+
+        // `length` means generation stopped at the ceiling rather than at the
+        // end of the text, so what came back is the transcript with its tail
+        // cut off. Nothing downstream can tell that from a clean result - the
+        // runaway guard only looks for output that is too *long* - so refuse it
+        // here and let `apply` fall back to the raw transcript. Losing the
+        // punctuation is recoverable; losing the last sentence is not.
+        let finish = v["choices"][0]["finish_reason"].as_str().unwrap_or_default();
+        anyhow::ensure!(
+            finish != "length",
+            "cleanup was truncated at the {max_tokens}-token ceiling"
+        );
+
         let text = v["choices"][0]["message"]["content"]
             .as_str()
             .context("cleanup response had no message content")?;
@@ -444,6 +485,32 @@ fn words(s: &str) -> std::collections::HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Words per minute of fairly quick speech, for sizing the budgets a
+    /// hands-free recording has to fit inside.
+    const FAST_WPM: usize = 220;
+    const AVG_WORD_CHARS: usize = 6; // including the trailing space
+
+    #[test]
+    fn the_token_ceiling_covers_a_full_hands_free_recording() {
+        // The ceiling exists to stop a runaway generation, not to trim real
+        // output: hitting it on an honest transcript means truncation.
+        let chars = FAST_WPM * 2 * AVG_WORD_CHARS; // two minutes of talking
+        let needed = chars / 2 + 64;
+        assert!(
+            needed <= MAX_OUTPUT_TOKENS,
+            "two minutes of speech asks for {needed} tokens, ceiling is {MAX_OUTPUT_TOKENS}"
+        );
+    }
+
+    #[test]
+    fn the_request_budget_grows_with_the_utterance_but_stays_bounded() {
+        let short = request_timeout(64 + 20);
+        let long = request_timeout(MAX_OUTPUT_TOKENS);
+        assert!(short < Duration::from_secs(2), "a one-liner must not wait around");
+        assert!(long > short, "a long dictation deserves more than a one-liner");
+        assert!(long <= MAX_REQUEST_TIMEOUT);
+    }
 
     #[test]
     fn strips_wrapping_quotes() {

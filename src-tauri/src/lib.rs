@@ -313,10 +313,12 @@ fn start_pipeline(app: tauri::AppHandle) -> Result<()> {
     // The hook thread must do nothing but forward events, so give it a channel
     // rather than any real work.
     let (tx, rx) = crossbeam_channel::unbounded::<PttEvent>();
-    let chord = settings::current().chord();
-    tracing::info!(hotkey = %chord.label(), "installing push-to-talk chord");
+    let current = settings::current();
+    let chord = current.chord();
+    let hands_free = current.effective_hands_free();
+    tracing::info!(hotkey = %chord.label(), hands_free, "installing push-to-talk chord");
     std::thread::Builder::new().name("paraflow-hotkey".into()).spawn(move || {
-        if let Err(e) = hotkey::run(chord, tx) {
+        if let Err(e) = hotkey::run(chord, hands_free, tx) {
             tracing::error!(error = %e, "keyboard hook failed");
         }
     })?;
@@ -344,6 +346,11 @@ fn save_settings(app: tauri::AppHandle, next: settings::Settings) -> Result<(), 
     // The hook holds its own copy of the chord, so push the new one in.
     if next.hotkey != previous.hotkey {
         hotkey::set_chord(next.chord());
+    }
+    // Same for the latch: the double-press test happens on the hook thread,
+    // so switching it off has to reach the hook rather than only the settings.
+    if next.hands_free != previous.hands_free {
+        hotkey::set_latch_enabled(next.effective_hands_free());
     }
     // The overlay prints the chord in its idle hint, so it has to be told -
     // otherwise it keeps advertising the old keys while the new ones work,

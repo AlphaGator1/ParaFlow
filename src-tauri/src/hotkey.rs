@@ -9,11 +9,12 @@ use crossbeam_channel::Sender;
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY,
+    GetDoubleClickTime, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_KEYUP, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, HHOOK,
@@ -28,10 +29,36 @@ pub enum PttEvent {
     Down,
     /// The chord was broken by releasing one of its keys.
     Up,
-    /// Chord pressed twice quickly - latch into hands-free until the next press.
-    /// Reserved for the hands-free milestone; the hook does not emit it yet.
-    #[allow(dead_code)]
+    /// Start or stop hands-free recording: a double press when idle, and any
+    /// single press once latched.
     ToggleLatch,
+}
+
+/// Bounds on the gap that counts as a double press.
+///
+/// The window itself comes from `GetDoubleClickTime`, not a constant of ours.
+/// Someone who lengthened it in Ease of Access has told Windows they need
+/// longer, and a latch that will not arm for them is a latch they cannot use.
+/// Clamped at both ends because the setting is allowed to be 100 ms - barely
+/// hittable for a two-key chord - or several seconds, at which point two
+/// deliberately separate dictations would latch by accident.
+const DOUBLE_PRESS_MIN: Duration = Duration::from_millis(200);
+const DOUBLE_PRESS_MAX: Duration = Duration::from_millis(600);
+
+fn clamp_double_window(ms: u64) -> Duration {
+    Duration::from_millis(ms).clamp(DOUBLE_PRESS_MIN, DOUBLE_PRESS_MAX)
+}
+
+fn double_press_window() -> Duration {
+    clamp_double_window(unsafe { GetDoubleClickTime() } as u64)
+}
+
+/// Was this press close enough behind the last release to be a double press?
+///
+/// `None` means the chord has not been released since the last time this was
+/// answered, which is how a press is disarmed after it has been used.
+fn is_double_press(last_up: Option<Instant>, now: Instant, window: Duration) -> bool {
+    last_up.is_some_and(|t| now.saturating_duration_since(t) <= window)
 }
 
 /// A push-to-talk binding: every virtual-key code here must be held at once.
@@ -190,6 +217,22 @@ struct HookState {
     /// When set, keystrokes are being read to define a new chord rather than
     /// matched against the current one.
     capture: Option<Capture>,
+
+    // --- hands-free latch -------------------------------------------------
+    /// When the chord was last released. `None` disarms double-press detection.
+    last_up: Option<Instant>,
+    /// How close two presses must be to count as a double press.
+    double_window: Duration,
+    /// Whether double-tap latching is switched on in settings.
+    latch_enabled: bool,
+    /// Mirrors the pipeline's latch state. The hook needs it because a press
+    /// while latched must always read as "stop", never as the first half of a
+    /// new double press.
+    latched: bool,
+    /// Set when the press in progress was itself a latch action, so its release
+    /// does not arm the detector. Without this, the habit of double-tapping to
+    /// *stop* would stop the latch and immediately start it again.
+    suppress_arm: bool,
 }
 
 static STATE: OnceCell<Mutex<HookState>> = OnceCell::new();
@@ -217,6 +260,31 @@ pub fn set_chord(chord: Chord) {
     // Any partially-held state refers to the old chord.
     st.held.clear();
     st.engaged = false;
+    st.last_up = None;
+    st.suppress_arm = false;
+}
+
+/// Arm or disarm double-tap latching without reinstalling the hook.
+pub fn set_latch_enabled(enabled: bool) {
+    let Some(cell) = STATE.get() else { return };
+    let mut st = cell.lock();
+    if st.latch_enabled == enabled {
+        return;
+    }
+    st.latch_enabled = enabled;
+    st.last_up = None;
+    tracing::info!(enabled, "hands-free latch setting changed");
+}
+
+/// Tell the hook whether the pipeline is currently recording hands-free.
+///
+/// Set to true the moment a latch starts and false the moment it ends -
+/// before any slow work - because while it is set every press is turned into
+/// a stop, and a press that arrived during transcription would be swallowed.
+pub fn set_latched(latched: bool) {
+    let Some(cell) = STATE.get() else { return };
+    let mut st = cell.lock();
+    st.latched = latched;
 }
 
 /// Start reading keystrokes as a chord definition.
@@ -244,8 +312,14 @@ pub fn cancel_capture() {
 }
 
 /// Install the hook and pump messages. Blocks forever - call on its own thread.
-pub fn run(chord: Chord, tx: Sender<PttEvent>) -> anyhow::Result<()> {
+pub fn run(chord: Chord, latch_enabled: bool, tx: Sender<PttEvent>) -> anyhow::Result<()> {
     let normalized = Chord { keys: chord.keys.iter().copied().map(canonical).collect() };
+    let double_window = double_press_window();
+    tracing::info!(
+        latch_enabled,
+        double_press_ms = double_window.as_millis(),
+        "hands-free latch configured"
+    );
 
     STATE
         .set(Mutex::new(HookState {
@@ -254,6 +328,11 @@ pub fn run(chord: Chord, tx: Sender<PttEvent>) -> anyhow::Result<()> {
             engaged: false,
             tx,
             capture: None,
+            last_up: None,
+            double_window,
+            latch_enabled,
+            latched: false,
+            suppress_arm: false,
         }))
         .map_err(|_| anyhow::anyhow!("keyboard hook already installed"))?;
 
@@ -339,22 +418,51 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
 
     // --- normal mode --------------------------------------------------------
     let mut just_engaged = false;
+    let mut sent: Option<PttEvent> = None;
     if is_down {
         st.held.insert(vk);
         if !st.engaged && st.chord.keys.iter().all(|k| st.held.contains(k)) {
             st.engaged = true;
             just_engaged = true;
-            let _ = st.tx.send(PttEvent::Down);
+
+            let event = if st.latched {
+                // Latched: every press means stop, whatever its timing. Reading
+                // it as the first half of a fresh double press instead is how
+                // "stop" turns into "stop and immediately start again".
+                st.suppress_arm = true;
+                PttEvent::ToggleLatch
+            } else if st.latch_enabled
+                && is_double_press(st.last_up, Instant::now(), st.double_window)
+            {
+                st.suppress_arm = true;
+                PttEvent::ToggleLatch
+            } else {
+                PttEvent::Down
+            };
+            // Consumed either way: a triple tap is a double tap plus a press,
+            // not two latches.
+            st.last_up = None;
+            let _ = st.tx.send(event);
+            sent = Some(event);
         }
     } else if is_up {
         st.held.remove(&vk);
         if st.engaged && !st.chord.keys.iter().all(|k| st.held.contains(k)) {
             st.engaged = false;
+            st.last_up = if st.suppress_arm { None } else { Some(Instant::now()) };
+            st.suppress_arm = false;
             let _ = st.tx.send(PttEvent::Up);
+            sent = Some(PttEvent::Up);
         }
     }
     let uses_win = st.chord.keys.contains(&VK_WIN);
     drop(st);
+
+    // Logged outside the lock: this thread must not hold it while formatting,
+    // and Windows silently uninstalls hooks that take too long.
+    if let Some(event) = sent {
+        tracing::debug!(?event, "push-to-talk");
+    }
 
     if just_engaged && uses_win {
         defeat_start_menu();
@@ -428,5 +536,41 @@ mod tests {
         assert!(c.keys.contains(&VK_CONTROL));
         assert!(c.keys.contains(&VK_WIN));
         assert_eq!(c.keys.len(), 2);
+    }
+
+    // --- hands-free latch ---------------------------------------------------
+
+    #[test]
+    fn a_quick_second_press_is_a_double_press() {
+        let window = Duration::from_millis(400);
+        let up = Instant::now();
+        let soon = up + Duration::from_millis(150);
+        assert!(is_double_press(Some(up), soon, window));
+    }
+
+    #[test]
+    fn a_slow_second_press_is_not() {
+        let window = Duration::from_millis(400);
+        let up = Instant::now();
+        let later = up + Duration::from_millis(401);
+        assert!(!is_double_press(Some(up), later, window));
+    }
+
+    #[test]
+    fn a_press_with_no_prior_release_is_never_a_double_press() {
+        // This is how the detector is disarmed: clearing `last_up` after using
+        // it stops a third tap latching again, and stops the release of a
+        // latch-stopping press from arming the next one.
+        assert!(!is_double_press(None, Instant::now(), Duration::from_millis(400)));
+    }
+
+    #[test]
+    fn the_double_press_window_is_clamped_at_both_ends() {
+        // Windows allows 100ms, which is not hittable with a two-key chord...
+        assert_eq!(clamp_double_window(100), DOUBLE_PRESS_MIN);
+        // ...and several seconds, which would latch two separate dictations.
+        assert_eq!(clamp_double_window(5_000), DOUBLE_PRESS_MAX);
+        // The Windows default sits inside the range and is left alone.
+        assert_eq!(clamp_double_window(500), Duration::from_millis(500));
     }
 }

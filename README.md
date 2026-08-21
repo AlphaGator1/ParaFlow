@@ -26,8 +26,8 @@ appears. The layers that carry the most risk are all real; polish is not.
 | ✅ On-demand microphone | opens on first press, closes when the burst ends |
 | ✅ Personal dictionary | corrects mishearings to your own spellings |
 | ✅ Per-app tone | a terminal is not an email |
-| ⬜ Hands-free latch | double-tap to lock on |
-| ⬜ Installer | see *Packaging*, below |
+| ✅ Hands-free latch | double-tap to lock on, single press to stop |
+| ✅ Installer + user guide | 2.8 MB NSIS, everything else on first run |
 
 ### CUDA or Vulkan
 
@@ -196,7 +196,8 @@ Tray → **Settings…**, or edit `%LOCALAPPDATA%\ParaFlow\settings.json` by han
   "overlay": "bottom",
   "idleSeconds": 30,
   "cleanup": true,
-  "chimes": true
+  "chimes": true,
+  "handsFree": true
 }
 ```
 
@@ -205,9 +206,13 @@ readable and hand-editable. Unrecognised names fall back to the default rather
 than producing an unpressable hotkey, and `idleSeconds` is clamped to 5–3600.
 Every field is `#[serde(default)]`, so a partial file is valid.
 
-Changing the hotkey, overlay, idle timeout or chimes takes effect immediately.
-Turning cleanup on or off starts or stops a sidecar holding gigabytes of VRAM,
-so that one asks for a restart.
+Changing the hotkey, overlay, idle timeout, chimes or the hands-free latch
+takes effect immediately. Turning cleanup on or off starts or stops a sidecar
+holding gigabytes of VRAM, so that one asks for a restart.
+
+The hotkey and the latch both live in two places - the settings store and the
+hook's own state - so `save_settings` pushes each into the hook rather than
+letting the hook read settings on the keystroke path.
 
 **Rebinding** uses the low-level hook in a capture mode: it reads the chord and
 swallows every keystroke while doing so, since the user is pressing arbitrary
@@ -295,6 +300,39 @@ recogniser. `PARAFLOW_IDLE_SECS` tunes the timeout.
 
 The OS microphone indicator is therefore an honest signal, and the HUD's
 `LIVE`/`OFF` badge mirrors it.
+
+### Hands-free latch
+
+Double-tap the chord and recording locks on until the next press, so a
+paragraph does not mean holding a key for two minutes. Off with
+`PARAFLOW_NO_LATCH`, or the settings toggle.
+
+The double-press window is `GetDoubleClickTime()` clamped to 200–600 ms, rather
+than a constant. Someone who lengthened it in Ease of Access has told Windows
+they need longer, and a latch that will not arm for them is a latch they cannot
+use. The clamp exists because the setting is legally 100 ms (unhittable with a
+two-key chord) up to several seconds (two separate dictations would latch by
+accident).
+
+**The hook has to know the pipeline is latched.** It is a shared flag, not
+inference, and it earns its keep on one specific sequence: someone who latched
+with a double-tap will often try to *stop* with one. Without the flag, tap one
+stops the latch, its release arms the detector, and tap two immediately latches
+again — the exact "my microphone stayed on" surprise the feature is supposed to
+avoid. With it, any press while latched is unconditionally a stop and its
+release is suppressed from arming. The pipeline clears the flag *before*
+transcribing rather than after, so a press arriving during those ~120 ms starts
+the next dictation instead of being swallowed.
+
+**It stops itself at two minutes.** Not a taste decision: the capture ring holds
+`RING_SECONDS` of audio and `Ring::slice` clamps to whatever is still resident
+instead of erroring, so a latch that outran the ring would silently lose its own
+beginning. `MAX_LATCHED` sits 30 s inside it, with a test asserting the headroom
+and a countdown on the overlay for the last 20 s. It doubles as the answer to a
+microphone left recording because somebody walked away.
+
+Long recordings also broke two budgets in the cleanup pass that had been sized
+for one-sentence bursts — see *Cleanup pass*.
 
 ### Why these choices
 
@@ -522,10 +560,10 @@ not from the model choice.
 
 ### Cleanup pass
 
-Qwen3-4B-Instruct Q4\_K\_M, 2.8 GB VRAM, over 12 cases in `examples/cleanup.rs`:
+Qwen3-4B-Instruct Q4\_K\_M, 2.8 GB VRAM, over 13 cases in `examples/cleanup.rs`:
 
 ```
-  mean 65 ms   (prompt cache makes the fixed prefix ~free)
+  mean 197 ms  including one two-minute case; ~65 ms without it
 ```
 
 Cost scales with *output* length, not input: a 210-character result took 195 ms
@@ -535,9 +573,28 @@ roughly halve it at some cost in cleanup quality. Not currently worth trading,
 since the total sits comfortably under the ~500 ms threshold where dictation
 starts to feel like a round trip.
 
+**Two budgets here were sized for one-sentence bursts and the hands-free latch
+outgrew them.** Both failed in the direction that is hardest to notice:
+
+- `max_tokens` was capped at 512. The harness's two-minute case cleans to 2351
+  characters, which fits inside 512 with essentially nothing spare — a ceiling
+  with no headroom is not a margin. Worse, hitting it *truncates* rather than
+  fails: `looks_like_an_answer` only catches output that is too **long**, so a
+  cut-off transcript would have been pasted as though it were complete. The cap
+  is now 1536, and a `finish_reason == "length"` check rejects a truncated
+  response outright so `apply` falls back to the full raw transcript.
+  Verified by forcing the ceiling to 128: the guard fires and 2382 characters
+  come back unchanged rather than cut short.
+- The request timeout was a flat 2500 ms. Right when every utterance was a
+  sentence — waiting three seconds to punctuate one line is worse than the raw
+  transcript — and wrong afterwards, because after two minutes of dictation a
+  few extra seconds is cheap and losing cleanup entirely is not. It now scales
+  with expected output, capped at 8 s. The two-minute case takes 1.78 s.
+
 Run the harness after any prompt, model, or style change. Three cases are
 adversarial — two catch the model answering instead of transcribing, one
-catches it inserting dictionary terms that were never spoken:
+catches it inserting dictionary terms that were never spoken — and the
+two-minute case is what the latch actually produces:
 
 ```powershell
 cargo run --release --example cleanup
@@ -596,7 +653,7 @@ models/                    ggml + gguf weights               (gitignored)
 cd src-tauri; cargo test --lib
 ```
 
-43 unit tests, weighted toward the things that failed silently in development:
+53 unit tests, weighted toward the things that failed silently in development:
 side-agnostic modifier mapping (a transposed `VK_LCONTROL` once made the hotkey
 unpressable), ring-buffer marks surviving a wrap, resampling that keeps every
 sample it owes including the tail, and the cleanup guards.

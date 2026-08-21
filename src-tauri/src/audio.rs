@@ -24,8 +24,14 @@ use std::time::Instant;
 pub const TARGET_RATE: u32 = 16_000;
 /// Audio kept behind the press instant, to catch a syllable that beat the key.
 const PREROLL_MS: u64 = 300;
-/// Ring capacity. Utterances are seconds long; 120s is a generous ceiling.
-const RING_SECONDS: usize = 120;
+/// Ring capacity, in seconds of audio.
+///
+/// A press-and-hold utterance is seconds long, but a hands-free latch runs
+/// until the user stops it, and `Ring::slice` clamps silently rather than
+/// erroring - so a latch that outran the ring would quietly lose its own
+/// beginning. This is deliberately larger than `pipeline::MAX_LATCHED`, and
+/// `pipeline` has a test asserting the headroom.
+pub const RING_SECONDS: usize = 150;
 
 struct Ring {
     buf: VecDeque<f32>,

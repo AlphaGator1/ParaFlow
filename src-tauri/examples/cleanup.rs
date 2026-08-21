@@ -98,7 +98,58 @@ const CASES: &[(&str, Style, &str, &str)] = &[
         "The weather is lovely today and the coffee is good.",
         "MUST NOT sprinkle in dictionary terms that were never said",
     ),
+    // --- hands-free -------------------------------------------------------
+    (
+        "two-minute hands-free recording",
+        Style::Prose,
+        LONG_DICTATION,
+        "the WHOLE thing comes back, punctuated, inside the request budget",
+    ),
 ];
+
+/// A full hands-free recording: two minutes of fairly quick speech, which is
+/// what the latch hands to cleanup when it runs all the way to its ceiling.
+///
+/// This is the shape the old budgets were not sized for. Measured on the
+/// development machine: 2382 characters in, 2351 out, 1.75 s - which fits the
+/// old 512-token ceiling with almost nothing spare and the old flat 2.5 s
+/// timeout with about 30% spare. Neither had room for someone talking faster.
+///
+/// Check two things when this runs: that the last sentence about the rollback
+/// story is present, and that the timing sits inside `polish::request_timeout`.
+const LONG_DICTATION: &str = "\
+Okay, so I wanted to walk through where we are with the migration before the \
+review on Thursday, because there are a few things that I don't think are \
+written down anywhere yet. Um, the first thing is that the data import is \
+basically done. We finished the last batch on Monday, and the row counts \
+match on both sides, which is, you know, the main thing we were worried \
+about. There are about four hundred records that failed validation, but \
+they're all from the twenty nineteen archive and, honestly, I think we should \
+just leave those out rather than hold up the whole thing. The second thing is \
+performance. The new queries are faster in almost every case, but there's one \
+report, the quarterly rollup, that got noticeably slower, and I haven't worked \
+out why yet. My guess is it's an index we didn't recreate when we rebuilt the \
+table, but I want to actually measure it before I go changing things, because \
+last time we guessed at something like this we spent two days on the wrong \
+problem. Third, and this is the one I really want to talk about on Thursday, \
+we still don't have a rollback plan that anyone has tested. We have a plan on \
+paper, and it looks reasonable, but nobody has actually run it end to end, and \
+I really don't want the first time we try it to be at two in the morning in \
+the middle of an incident with everyone watching. So what I'd like to propose \
+is that we spend, uh, maybe a day next week doing a full dry run on the \
+staging environment, restore included, and write down how long each step \
+actually takes rather than how long we think it takes. Fourth thing, and I \
+keep forgetting to mention this, we're going to need someone from the finance \
+team available on the day of the cutover, because the reconciliation reports \
+run overnight and if those come out wrong we need somebody who can tell us \
+whether it's a real problem or just a timing artefact. I've asked Priya but I \
+haven't heard back yet. Last thing, and this is minor, the documentation is \
+out of date in a few places, mostly the bits about the old import script that \
+doesn't exist any more. I'll fix that myself, it's not a blocker, I just don't \
+want anyone reading it and getting confused about which system is live. So \
+yeah, that's roughly where we are. I think we're in decent shape overall, and \
+the timeline still looks fine, the only thing that genuinely worries me is the \
+rollback story.";
 
 /// Terms fed to the model for this run, mirroring a user's dictionary.txt.
 const TEST_TERMS: &str = "Priya\nKubernetes\nParaFlow\nAnthropic\n";
@@ -143,7 +194,20 @@ fn main() -> anyhow::Result<()> {
         println!("\x1b[1m{label}\x1b[0m  [{style:?}]  ({expectation})");
         println!("  \x1b[2min \x1b[0m {raw}");
         println!("  \x1b[36mout\x1b[0m {}", cleaned.replace('\n', "\n      "));
-        println!("  \x1b[2m{ms} ms\x1b[0m\n");
+        // Cleanup fails open, so a rejected result comes back as the input
+        // rather than as an error, and nothing here can tell the two apart -
+        // several of the adversarial cases are *supposed* to come back
+        // untouched. What the counts can catch is the failure that actually
+        // threatens a long dictation: output far shorter than the input means
+        // the tail went missing, to a token ceiling or to the model deciding
+        // to summarise.
+        let lost_the_tail = cleaned.len() * 10 < raw.len() * 6;
+        println!(
+            "  \x1b[2m{ms} ms, {} in -> {} out chars{}\x1b[0m\n",
+            raw.len(),
+            cleaned.len(),
+            if lost_the_tail { "  \x1b[33m<- SHORT: check the tail survived\x1b[0m" } else { "" }
+        );
     }
 
     println!("mean {} ms over {} cases", total / CASES.len() as u128, CASES.len());

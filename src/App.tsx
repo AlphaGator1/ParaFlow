@@ -8,6 +8,7 @@ type Stage =
   | { kind: "idle" }
   | { kind: "waking" }
   | { kind: "listening" }
+  | { kind: "latched"; elapsedS: number; remainingS: number }
   | { kind: "transcribing" }
   | { kind: "polishing" }
   | { kind: "done"; text: string; latencyMs: number }
@@ -16,6 +17,17 @@ type Stage =
 type Mic = { open: boolean; device: string; closesInS: number };
 
 const BAR_COUNT = 13;
+
+/// How close to the hands-free ceiling before the overlay counts down rather
+/// than just showing the clock. Presentation only - the ceiling itself lives
+/// in pipeline.rs, which is what actually enforces it.
+const LATCH_WARN_S = 20;
+
+function mmss(total: number) {
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 export default function App() {
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
@@ -111,9 +123,26 @@ function MicBadge({ mic }: { mic: Mic }) {
   );
 }
 
+/// The push-to-talk chord as keycaps. Always read from live settings - the
+/// overlay once printed a hardcoded "Ctrl + Win" and kept advertising it after
+/// a rebind, which reads as the rebind not having worked.
+function Keys({ keys }: { keys: string[] }) {
+  return (
+    <>
+      {keys.map((k, i) => (
+        <span key={k}>
+          {i > 0 && " + "}
+          <kbd>{k}</kbd>
+        </span>
+      ))}
+    </>
+  );
+}
+
 function Visual({ stage, bars }: { stage: Stage; bars: number[] }) {
   switch (stage.kind) {
     case "listening":
+    case "latched":
       return (
         <div className="wave">
           {bars.map((v, i) => (
@@ -149,14 +178,7 @@ function Label({ stage, mic, hotkey }: { stage: Stage; mic: Mic; hotkey: string[
               <>Mic closes in {mic.closesInS}s</>
             ) : (
               <>
-                Hold{" "}
-                {hotkey.map((k, i) => (
-                  <span key={k}>
-                    {i > 0 && " + "}
-                    <kbd>{k}</kbd>
-                  </span>
-                ))}{" "}
-                to dictate
+                Hold <Keys keys={hotkey} /> to dictate
               </>
             )}
           </div>
@@ -176,6 +198,29 @@ function Label({ stage, mic, hotkey }: { stage: Stage; mic: Mic; hotkey: string[
           <div className="sub">Release to transcribe</div>
         </>
       );
+    case "latched": {
+      // The stop key is the important half of this: hands-free means nothing
+      // the user is holding will end it.
+      const ending = stage.remainingS <= LATCH_WARN_S;
+      return (
+        <>
+          <div className="title">
+            Hands-free <span className="clock">{mmss(stage.elapsedS)}</span>
+          </div>
+          <div className={`sub ${ending ? "urgent" : ""}`}>
+            {ending ? (
+              <>
+                Stops in {stage.remainingS}s — press <Keys keys={hotkey} /> to finish
+              </>
+            ) : (
+              <>
+                Press <Keys keys={hotkey} /> to stop
+              </>
+            )}
+          </div>
+        </>
+      );
+    }
     case "transcribing":
       return (
         <>
