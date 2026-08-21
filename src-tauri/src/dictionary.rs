@@ -61,7 +61,7 @@ impl Dictionary {
 
     pub fn path() -> Option<PathBuf> {
         let base = std::env::var_os("LOCALAPPDATA")?;
-        Some(PathBuf::from(base).join("FlowState").join("dictionary.txt"))
+        Some(PathBuf::from(base).join("ParaFlow").join("dictionary.txt"))
     }
 
     fn parse(body: &str) -> Self {
@@ -109,7 +109,7 @@ impl Dictionary {
 }
 
 const TEMPLATE: &str = "\
-# FlowState personal dictionary
+# ParaFlow personal dictionary
 #
 # One name or term per line. These are given to the cleanup model, which will
 # correct mishearings to the exact spelling written here - so capitalise them
@@ -122,7 +122,7 @@ const TEMPLATE: &str = "\
 #
 # Examples, delete these:
 # Kubernetes
-# FlowState
+# ParaFlow
 # Anthropic
 ";
 
@@ -132,8 +132,8 @@ mod tests {
 
     #[test]
     fn comments_and_blank_lines_are_ignored() {
-        let d = Dictionary::parse("# a comment\n\n  Kubernetes  \n\nFlowState # trailing\n");
-        assert_eq!(d.terms, vec!["Kubernetes", "FlowState"]);
+        let d = Dictionary::parse("# a comment\n\n  Kubernetes  \n\nParaFlow # trailing\n");
+        assert_eq!(d.terms, vec!["Kubernetes", "ParaFlow"]);
     }
 
     #[test]

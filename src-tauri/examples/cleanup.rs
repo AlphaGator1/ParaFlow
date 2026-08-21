@@ -10,8 +10,8 @@
 //!   cargo run --example cleanup
 //!   cargo run --example cleanup -- Qwen3-1.7B-Q4_K_M.gguf
 
-use flowstate_lib::dictionary::Dictionary;
-use flowstate_lib::polish::{Polish, PolishConfig, Style};
+use paraflow_lib::dictionary::Dictionary;
+use paraflow_lib::polish::{Polish, PolishConfig, Style};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -101,13 +101,16 @@ const CASES: &[(&str, Style, &str, &str)] = &[
 ];
 
 /// Terms fed to the model for this run, mirroring a user's dictionary.txt.
-const TEST_TERMS: &str = "Priya\nKubernetes\nFlowState\nAnthropic\n";
+const TEST_TERMS: &str = "Priya\nKubernetes\nParaFlow\nAnthropic\n";
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("warn").init();
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
-    let server_bin = root.join("vendor/llama-cuda/llama-server.exe");
+    // Which acceleration backend to exercise. Vulkan is ~7x smaller on disk
+    // than CUDA and runs on AMD and Intel too, so it matters for packaging.
+    let accel = std::env::var("PARAFLOW_ACCEL").unwrap_or_else(|_| "cuda".into());
+    let server_bin = root.join(format!("vendor/llama-{accel}/llama-server.exe"));
     let model = root.join("models").join(
         std::env::args().nth(1).unwrap_or_else(|| "Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
     );
@@ -116,6 +119,7 @@ fn main() -> anyhow::Result<()> {
     // gives the same answer on any machine.
     let dictionary = Dictionary::from_text(TEST_TERMS);
 
+    println!("accel : {accel}");
     println!("model : {}", model.display());
     println!("dict  : {} terms", dictionary.len());
     print!("loading... ");

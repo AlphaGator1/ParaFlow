@@ -49,7 +49,7 @@ $serverArgs = @(
 if ($Cpu) { $serverArgs += "--no-gpu" }
 
 Write-Host "Starting sidecar ($build)..." -ForegroundColor Cyan
-$stderrLog = Join-Path $env:TEMP "flowstate-test-asr.err.txt"
+$stderrLog = Join-Path $env:TEMP "paraflow-test-asr.err.txt"
 $proc = Start-Process -FilePath $server -ArgumentList $serverArgs `
     -WorkingDirectory (Split-Path $server -Parent) `
     -PassThru -WindowStyle Hidden -RedirectStandardError $stderrLog

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Fetches the inference runtime and model weights FlowState needs at runtime.
+    Fetches the inference runtime and model weights ParaFlow needs at runtime.
 
 .DESCRIPTION
     vendor/ and models/ are deliberately not in version control - together they
@@ -56,7 +56,7 @@ Get-IfMissing "$pbase/parakeet-$ParakeetTag-bin-win-cuda-x64.zip" "$vendor\parak
 Get-IfMissing "$pbase/cudart-parakeet-bin-win-cuda-x64.zip" "$vendor\parakeet-rt.zip" "parakeet CUDA runtime"
 
 if (-not (Test-Path "$vendor\parakeet-cuda\parakeet-server.exe")) {
-    $stage = Join-Path $env:TEMP "flowstate-parakeet-stage"
+    $stage = Join-Path $env:TEMP "paraflow-parakeet-stage"
     Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
     Expand-Archive "$vendor\parakeet.zip" $stage -Force
     Expand-Archive "$vendor\parakeet-rt.zip" $stage -Force
@@ -70,7 +70,7 @@ if (-not (Test-Path "$vendor\parakeet-cuda\parakeet-server.exe")) {
     Remove-Item $stage -Recurse -Force
 }
 
-# --- Whisper: kept selectable via FLOWSTATE_ASR=whisper ---------------------
+# --- Whisper: kept selectable via PARAFLOW_ASR=whisper ---------------------
 $base = "https://github.com/ggml-org/whisper.cpp/releases/download/$WhisperTag"
 
 Write-Host "`nASR runtime (whisper, fallback)" -ForegroundColor White

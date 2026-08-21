@@ -17,13 +17,18 @@
 param(
     [string]$Model = "tdt-0.6b-v3-q8_0.gguf",
     [int]$Port = 8187,
-    [int]$Runs = 4
+    [int]$Runs = 4,
+    # The Vulkan build is ~25x smaller than CUDA on disk and runs on AMD and
+    # Intel GPUs too, so it is the interesting one for packaging - provided it
+    # is fast enough.
+    [ValidateSet("cuda", "vulkan")]
+    [string]$Accel = "cuda"
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path $PSScriptRoot -Parent
 
-$bin = Join-Path $root "vendor\parakeet-cuda"
+$bin = Join-Path $root "vendor\parakeet-$Accel"
 $server = Join-Path $bin "parakeet-server.exe"
 $mdl = Join-Path $root "models\$Model"
 $sample = Join-Path $root "models\jfk.wav"
@@ -37,11 +42,13 @@ if (-not (Test-Path $sample)) {
 }
 
 $sizeMb = [math]::Round((Get-Item $mdl).Length / 1MB, 0)
+$runtimeMb = [math]::Round(((Get-ChildItem $bin -Recurse -File | Measure-Object -Property Length -Sum).Sum) / 1MB, 0)
+Write-Host "accel : $Accel (runtime $runtimeMb MB on disk)" -ForegroundColor White
 Write-Host "model : $Model ($sizeMb MB)" -ForegroundColor White
 
 # Quoted: this repo's path contains spaces (see test-asr.ps1 for the same trap).
 $serverArgs = @("--model", "`"$mdl`"", "--host", "127.0.0.1", "--port", "$Port", "--threads", "8")
-$errLog = Join-Path $env:TEMP "flowstate-test-parakeet.err.txt"
+$errLog = Join-Path $env:TEMP "paraflow-test-parakeet.err.txt"
 
 $proc = Start-Process -FilePath $server -ArgumentList $serverArgs -WorkingDirectory $bin `
     -PassThru -WindowStyle Hidden -RedirectStandardError $errLog

@@ -1,12 +1,12 @@
 [package]
-name = "flowstate"
+name = "paraflow"
 version = "0.1.0"
 description = "Local-first push-to-talk dictation for Windows"
 edition = "2021"
 rust-version = "1.77"
 
 [lib]
-name = "flowstate_lib"
+name = "paraflow_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]

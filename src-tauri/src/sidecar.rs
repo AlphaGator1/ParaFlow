@@ -65,7 +65,7 @@ pub fn ensure_port_free(name: &str, port: u16) -> Result<()> {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
         Ok(_) => Err(anyhow!(
-            "port {port} is already in use, so {name} cannot start. Another FlowState \
+            "port {port} is already in use, so {name} cannot start. Another ParaFlow \
              instance is probably still running - close it and try again."
         )),
         // Refused is what we want: nothing is there.

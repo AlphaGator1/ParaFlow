@@ -4,7 +4,7 @@
 //! capture light is lit all day for an app used in short bursts. So the device
 //! is opened when a dictation session starts and closed again once the session
 //! goes idle - the OS microphone indicator becomes an honest signal of whether
-//! FlowState is listening.
+//! ParaFlow is listening.
 //!
 //! Within a session the stream stays open, so only the *first* press of a burst
 //! pays the device-open cost. Every press after that keeps the original

@@ -43,13 +43,13 @@ pub enum Backend {
 }
 
 impl Backend {
-    /// `FLOWSTATE_ASR=whisper` opts out; anything else (or unset) is Parakeet.
+    /// `PARAFLOW_ASR=whisper` opts out; anything else (or unset) is Parakeet.
     pub fn from_env() -> Self {
-        match std::env::var("FLOWSTATE_ASR").unwrap_or_default().to_lowercase().as_str() {
+        match std::env::var("PARAFLOW_ASR").unwrap_or_default().to_lowercase().as_str() {
             "whisper" => Backend::Whisper,
             "" | "parakeet" => Backend::Parakeet,
             other => {
-                tracing::warn!(%other, "unknown FLOWSTATE_ASR value; using parakeet");
+                tracing::warn!(%other, "unknown PARAFLOW_ASR value; using parakeet");
                 Backend::Parakeet
             }
         }

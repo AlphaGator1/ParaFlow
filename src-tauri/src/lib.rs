@@ -1,4 +1,4 @@
-//! FlowState - local-first push-to-talk dictation for Windows.
+//! ParaFlow - local-first push-to-talk dictation for Windows.
 
 mod asr;
 mod audio;
@@ -70,8 +70,8 @@ fn resolve(relative: &str) -> Result<PathBuf> {
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_env("FLOWSTATE_LOG")
-                .unwrap_or_else(|_| "flowstate_lib=debug,info".into()),
+            tracing_subscriber::EnvFilter::try_from_env("PARAFLOW_LOG")
+                .unwrap_or_else(|_| "paraflow_lib=debug,info".into()),
         )
         .init();
 
@@ -85,7 +85,7 @@ pub fn run() {
             // !Send on Windows, so the capture device must be opened on the
             // same thread that ultimately owns it.
             std::thread::Builder::new()
-                .name("flowstate-pipeline".into())
+                .name("paraflow-pipeline".into())
                 .spawn(move || {
                     if let Err(e) = start_pipeline(handle) {
                         tracing::error!(error = %e, "pipeline failed to start");
@@ -95,14 +95,14 @@ pub fn run() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running FlowState");
+        .expect("error while running ParaFlow");
 }
 
 fn start_pipeline(app: tauri::AppHandle) -> Result<()> {
     let backend = Backend::from_env();
     // Only whisper's CPU paths use these; leave the rest of the machine free
     // for whatever the user is actually working in.
-    let config = Asr::locate(backend, std::env::var("FLOWSTATE_MODEL").ok(), resolve, 8)?;
+    let config = Asr::locate(backend, std::env::var("PARAFLOW_MODEL").ok(), resolve, 8)?;
 
     tracing::info!(
         ?backend,
@@ -118,14 +118,14 @@ fn start_pipeline(app: tauri::AppHandle) -> Result<()> {
     // The hook thread must do nothing but forward events, so give it a channel
     // rather than any real work.
     let (tx, rx) = crossbeam_channel::unbounded::<PttEvent>();
-    std::thread::Builder::new().name("flowstate-hotkey".into()).spawn(move || {
+    std::thread::Builder::new().name("paraflow-hotkey".into()).spawn(move || {
         if let Err(e) = hotkey::run(Chord::default(), tx) {
             tracing::error!(error = %e, "keyboard hook failed");
         }
     })?;
 
     let idle = Duration::from_secs(
-        env_or("FLOWSTATE_IDLE_SECS", &DEFAULT_IDLE_SECS.to_string())
+        env_or("PARAFLOW_IDLE_SECS", &DEFAULT_IDLE_SECS.to_string())
             .parse()
             .unwrap_or(DEFAULT_IDLE_SECS),
     );
@@ -141,8 +141,8 @@ fn start_pipeline(app: tauri::AppHandle) -> Result<()> {
 /// missing model or a failed launch downgrades to raw transcripts rather than
 /// taking the app down.
 fn start_polish() -> Option<Polish> {
-    if std::env::var("FLOWSTATE_NO_CLEANUP").is_ok() {
-        tracing::info!("cleanup pass disabled by FLOWSTATE_NO_CLEANUP");
+    if std::env::var("PARAFLOW_NO_CLEANUP").is_ok() {
+        tracing::info!("cleanup pass disabled by PARAFLOW_NO_CLEANUP");
         return None;
     }
 
@@ -153,7 +153,7 @@ fn start_polish() -> Option<Polish> {
             return None;
         }
     };
-    let model_name = env_or("FLOWSTATE_CLEANUP_MODEL", DEFAULT_CLEANUP_MODEL);
+    let model_name = env_or("PARAFLOW_CLEANUP_MODEL", DEFAULT_CLEANUP_MODEL);
     let model = match resolve(&format!("models/{model_name}")) {
         Ok(p) => p,
         Err(e) => {
@@ -180,13 +180,13 @@ fn start_polish() -> Option<Polish> {
 }
 
 fn build_tray(app: &tauri::AppHandle) -> Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show FlowState", true, None::<&str>)?;
+    let show = MenuItem::with_id(app, "show", "Show ParaFlow", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
 
-    TrayIconBuilder::with_id("flowstate-tray")
+    TrayIconBuilder::with_id("paraflow-tray")
         .icon(app.default_window_icon().cloned().ok_or_else(|| anyhow!("no default icon"))?)
-        .tooltip("FlowState - hold Ctrl+Win to dictate")
+        .tooltip("ParaFlow - hold Ctrl+Win to dictate")
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {

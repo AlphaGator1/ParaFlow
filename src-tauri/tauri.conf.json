@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "FlowState",
+  "productName": "ParaFlow",
   "version": "0.1.0",
-  "identifier": "com.flowstate.dictation",
+  "identifier": "com.paraflow.dictation",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -17,7 +17,7 @@
     "windows": [
       {
         "label": "hud",
-        "title": "FlowState",
+        "title": "ParaFlow",
         "width": 420,
         "height": 132,
         "resizable": false,

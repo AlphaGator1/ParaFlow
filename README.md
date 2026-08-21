@@ -1,4 +1,4 @@
-# FlowState
+# ParaFlow
 
 Push-to-talk dictation for Windows. Hold a key, speak, release — cleaned-up text
 lands at your cursor in whatever app has focus. Everything runs on your own GPU;
@@ -29,17 +29,56 @@ appears. The layers that carry the most risk are all real; polish is not.
 | ⬜ Hands-free latch | double-tap to lock on |
 | ⬜ Installer | see *Packaging*, below |
 
+### CUDA or Vulkan
+
+Both runtimes ship a Vulkan build, which needs no cuBLAS and runs on AMD and
+Intel GPUs as well as NVIDIA. Measured on an RTX 5090:
+
+| stage | CUDA | Vulkan | runtime on disk |
+|---|---|---|---|
+| ASR (Parakeet 0.6B) | 47 ms | **55 ms** | 1093 MB → **113 MB** |
+| Cleanup (Qwen3 4B) | 66 ms | **588 ms** | 670 MB → **97 MB** |
+
+**Vulkan is fine for transcription and unusable for cleanup.** 17% slower on
+the small encoder model, 9x slower on autoregressive token generation — which
+matches llama.cpp's known CUDA/Vulkan gap. It is genuinely on the GPU in both
+cases; VRAM went from 1365 MB to 4563 MB during the Vulkan cleanup run, so this
+is not a silent CPU fallback.
+
+Vulkan's *first ever* run on a machine costs ~4.6 s compiling shaders. The
+driver caches them, so later launches are 85–93 ms cold and 55 ms warm — faster
+cold than CUDA's 151 ms. `Asr::warm_up` absorbs it either way.
+
 ### Packaging
 
 `tauri.conf.json` deliberately declares **no `resources`**. Bundling `vendor/`
-and `models/` copied 2.8 GB into `target/debug` on every dev run, and would put
-a 1.6 GB model inside the installer.
+and `models/` copied 2.8 GB into `target/debug` on every dev run, and weights
+barely compress — GGUF is already quantised, so LZMA gets it to 95% of
+original. Anything bundled is paid for almost at full size.
 
-The intended shape instead: ship the app plus the whisper.cpp runtime, and pull
-model weights on first launch into `%LOCALAPPDATA%\FlowState\models\`. Until
-that exists, `resolve()` in `lib.rs` walks up from the executable and finds the
-project-root `vendor/` and `models/` directories, so development works as-is
-and `npm run tauri build` produces an app that must be run from the repo.
+Measured compression: **weights 95%**, DLLs 70%, executables 92%. That makes
+what you bundle matter far more than how you compress it:
+
+| installer contents | size |
+|---|---|
+| Parakeet + whisper fallback, weights bundled, CUDA | ~6.8 GB |
+| Parakeet only, weights bundled, CUDA | ~4.5 GB |
+| Parakeet only, weights on first run, CUDA | ~1.44 GB |
+| Parakeet only, weights on first run, Vulkan | **~79 MB** |
+
+The intended shape: ship the app plus runtimes, and pull weights on first
+launch into `%LOCALAPPDATA%\ParaFlow\models\` with progress in the HUD —
+resumable and checksum-verified, which is why it belongs in Rust rather than
+in an NSIS download plugin.
+
+The whisper fallback costs ~2.3 GB (1472 MB model + 851 MB runtime) and should
+be an optional component rather than a default: it exists for decoder prompt
+biasing, which Parakeet lacks, and as an escape hatch if Parakeet mishears a
+particular voice.
+
+Until that exists, `resolve()` in `lib.rs` walks up from the executable and
+finds the project-root `vendor/` and `models/` directories, so development
+works as-is and a built app must be run from the repo.
 
 ## Requirements
 
@@ -67,18 +106,18 @@ All optional, read at startup:
 
 | variable | default | meaning |
 |---|---|---|
-| `FLOWSTATE_ASR` | `parakeet` | `parakeet` or `whisper` |
-| `FLOWSTATE_MODEL` | per backend | transcription model in `models/`, overrides the backend default |
-| `FLOWSTATE_CLEANUP_MODEL` | `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | cleanup model |
-| `FLOWSTATE_NO_CLEANUP` | unset | set to anything to paste raw transcripts |
-| `FLOWSTATE_IDLE_SECS` | `30` | idle time before the mic is released |
-| `FLOWSTATE_LOG` | `flowstate_lib=debug,info` | tracing filter |
+| `PARAFLOW_ASR` | `parakeet` | `parakeet` or `whisper` |
+| `PARAFLOW_MODEL` | per backend | transcription model in `models/`, overrides the backend default |
+| `PARAFLOW_CLEANUP_MODEL` | `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | cleanup model |
+| `PARAFLOW_NO_CLEANUP` | unset | set to anything to paste raw transcripts |
+| `PARAFLOW_IDLE_SECS` | `30` | idle time before the mic is released |
+| `PARAFLOW_LOG` | `paraflow_lib=debug,info` | tracing filter |
 
 ```powershell
-$env:FLOWSTATE_IDLE_SECS = "60"; npm run tauri dev -- --release
+$env:PARAFLOW_IDLE_SECS = "60"; npm run tauri dev -- --release
 
 # A/B the two transcription backends on your own speech:
-$env:FLOWSTATE_ASR = "whisper"; npm run tauri dev -- --release
+$env:PARAFLOW_ASR = "whisper"; npm run tauri dev -- --release
 ```
 
 ---
@@ -135,7 +174,7 @@ opened lazily and released again:
 Only the first press of a burst pays the device-open cost, and a rising chime
 marks the moment it is safe to speak (a falling one marks the mic being
 released). Recording starts *after* the chime so the beep never reaches the
-recogniser. `FLOWSTATE_IDLE_SECS` tunes the timeout.
+recogniser. `PARAFLOW_IDLE_SECS` tunes the timeout.
 
 The OS microphone indicator is therefore an honest signal, and the HUD's
 `LIVE`/`OFF` badge mirrors it.
@@ -202,7 +241,7 @@ length as the input, so a length check alone sailed straight past it.
 
 ### Personal dictionary
 
-`%LOCALAPPDATA%\FlowState\dictionary.txt`, one name or term per line, created
+`%LOCALAPPDATA%\ParaFlow\dictionary.txt`, one name or term per line, created
 with a comment header on first run. Terms are appended to the cleanup system
 prompt, and the model corrects mishearings to the exact spelling written there:
 
@@ -326,7 +365,7 @@ attaching to another instance's model.
 
 ### Choosing the transcription backend
 
-Two backends, selected by `FLOWSTATE_ASR`. Both are resident HTTP sidecars
+Two backends, selected by `PARAFLOW_ASR`. Both are resident HTTP sidecars
 taking a WAV over multipart, so the client code in `asr.rs` is shared and only
 the flags and endpoint differ.
 

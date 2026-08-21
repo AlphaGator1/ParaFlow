@@ -2,7 +2,7 @@
 //!
 //! Two nested lifetimes run here. A *session* spans a burst of dictation: it
 //! opens the microphone on the first press and closes it once the burst goes
-//! quiet, so the capture light is only lit while FlowState is actually in use.
+//! quiet, so the capture light is only lit while ParaFlow is actually in use.
 //! An *utterance* is one press-and-hold inside that session.
 //!
 //! Everything runs off the UI thread. The hook thread only pushes events into a
