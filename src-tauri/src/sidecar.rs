@@ -53,6 +53,26 @@ pub fn tie_to_parent(child: &Child) -> Result<()> {
 #[cfg(windows)]
 pub const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Refuse to start if something is already listening on the sidecar's port.
+///
+/// Windows will happily let a second process bind a port another one already
+/// holds, and the loser simply never receives a connection. The failure that
+/// produces is nasty: our readiness probe succeeds instantly against the
+/// *other* process, and we then transcribe against whatever model it happens
+/// to have loaded, with no error anywhere. This turns that into a startup
+/// failure with a name attached.
+pub fn ensure_port_free(name: &str, port: u16) -> Result<()> {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    match std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(300)) {
+        Ok(_) => Err(anyhow!(
+            "port {port} is already in use, so {name} cannot start. Another FlowState \
+             instance is probably still running - close it and try again."
+        )),
+        // Refused is what we want: nothing is there.
+        Err(_) => Ok(()),
+    }
+}
+
 /// Block until the sidecar can actually serve on `port`, or it dies, or we
 /// give up.
 ///

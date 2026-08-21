@@ -24,8 +24,8 @@ appears. The layers that carry the most risk are all real; polish is not.
 | ✅ **Full round trip verified** | 160 ms from key release to pasted text |
 | ✅ LLM cleanup pass | fillers, punctuation, self-corrections, lists |
 | ✅ On-demand microphone | opens on first press, closes when the burst ends |
-| ⬜ Personal dictionary | learn names and jargon from corrections |
-| ⬜ Per-app tone | a terminal is not an email |
+| ✅ Personal dictionary | corrects mishearings to your own spellings |
+| ✅ Per-app tone | a terminal is not an email |
 | ⬜ Hands-free latch | double-tap to lock on |
 | ⬜ Installer | see *Packaging*, below |
 
@@ -200,6 +200,53 @@ reuses almost none. The drift check is the one that matters: the failure above
 produced `def reverse_string(s): return s[::-1]`, almost exactly the same
 length as the input, so a length check alone sailed straight past it.
 
+### Personal dictionary
+
+`%LOCALAPPDATA%\FlowState\dictionary.txt`, one name or term per line, created
+with a comment header on first run. Terms are appended to the cleanup system
+prompt, and the model corrects mishearings to the exact spelling written there:
+
+```
+in   Can you ask Prea to redeploy the kuber netes cluster?
+out  Can you ask Priya to redeploy the Kubernetes cluster?
+```
+
+This started as a plan to use whisper-server's `--prompt` for decoder-level
+biasing. Parakeet has no equivalent, so it moved into the cleanup prompt —
+which turned out better: biasing only nudges words the decoder half-heard,
+while an instruction model sees the whole sentence and can split "kuber netes".
+It also works whichever ASR backend is selected.
+
+The obvious failure mode is the model sprinkling dictionary terms into
+sentences that never contained them, so the prompt says not to and
+`examples/cleanup.rs` has a case that checks.
+
+Dictionary terms live in the *system* message because they are fixed for the
+process lifetime and so stay inside llama.cpp's cached prefix. Anything varying
+per utterance has to go in the final turn instead — which is exactly where the
+per-app style tag goes.
+
+### Per-app tone
+
+The target app is identified by **process name**, not window title — titles
+change with the open document, get localised, and collide across apps.
+
+| style | apps | effect |
+|---|---|---|
+| `Code` | editors, IDEs, terminals | spoken symbols become literal (`dash b` → `-b`), no trailing stop on commands |
+| `Mail` | Outlook, Thunderbird | complete sentences, full punctuation |
+| `Chat` | Slack, Discord, Teams | conversational, contractions kept |
+| `Prose` | everything else | default |
+
+Browsers deliberately map to `Prose`: a browser could be mail, chat, or an
+editor, and guessing wrong is worse than not guessing.
+
+`Code` splits on what was *dictated*, not on the app, because an editor holds
+shell commands and prose comments alike. An earlier version of the hint said
+only "terse" and stripped the capital and full stop off ordinary sentences.
+Both behaviours are pinned by few-shot examples — the style hint alone was not
+enough to teach either.
+
 ### Measured on the development machine
 
 Ryzen 9 9950X3D · RTX 5090 (32 GB, `sm_120`) · Windows 11 · `large-v3-turbo`
@@ -251,15 +298,24 @@ pathologically sensitive to it:
 
 Transcription and cleanup are unaffected — those run inside the sidecar
 processes, which are optimized binaries either way — so a debug build shows a
-realistic GPU cost sitting behind an unrealistic capture cost. Measure latency
-with:
-
-```powershell
-npm run tauri dev -- --release
-```
+realistic GPU cost sitting behind an unrealistic capture cost.
 
 This was worth checking before optimizing: the resampler looked like the most
 expensive stage in the pipeline and is in fact ~1% of it.
+
+**To actually use the app**, run it standalone rather than through
+`tauri dev` — no vite server, and no file watcher:
+
+```powershell
+npm run build
+cd src-tauri; cargo run --release --no-default-features
+```
+
+`npm run tauri dev -- --release` is for iterating on the UI. Be aware its
+watcher rebuilds and **relaunches** on every source edit, so editing Rust while
+it runs leaves you with several live instances competing for the sidecar ports.
+Startup now refuses to continue if a port is already held, rather than silently
+attaching to another instance's model.
 
 ### Choosing the transcription backend
 
@@ -303,17 +359,25 @@ not from the model choice.
 
 ### Cleanup pass
 
-Qwen3-4B-Instruct Q4\_K\_M, 2.8 GB VRAM, over 9 cases in `examples/cleanup.rs`:
+Qwen3-4B-Instruct Q4\_K\_M, 2.8 GB VRAM, over 12 cases in `examples/cleanup.rs`:
 
 ```
-  mean 62 ms   (prompt cache makes the fixed prefix ~free)
+  mean 65 ms   (prompt cache makes the fixed prefix ~free)
 ```
 
-Run it after any prompt or model change — two cases are adversarial and exist
-to catch the model answering instead of transcribing:
+Cost scales with *output* length, not input: a 210-character result took 195 ms
+against 65 ms for the short harness cases. That makes cleanup the dominant
+stage, and the only remaining latency lever — a smaller instruction model would
+roughly halve it at some cost in cleanup quality. Not currently worth trading,
+since the total sits comfortably under the ~500 ms threshold where dictation
+starts to feel like a round trip.
+
+Run the harness after any prompt, model, or style change. Three cases are
+adversarial — two catch the model answering instead of transcribing, one
+catches it inserting dictionary terms that were never spoken:
 
 ```powershell
-cargo run --example cleanup
+cargo run --release --example cleanup
 ```
 
 ### A note on Blackwell

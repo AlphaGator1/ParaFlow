@@ -1,73 +1,107 @@
 //! Quality harness for the dictation cleanup pass.
 //!
 //! Runs representative transcripts through the real `Polish` prompt and prints
-//! before/after pairs with timings. Two of the cases are adversarial: an
+//! before/after pairs with timings. Several cases are adversarial: an
 //! instruction and a question that the model must *write down* rather than act
-//! on. If those ever start getting answered, the cleanup pass has become
-//! actively dangerous and this is where it shows up.
+//! on, and a dictionary term that must not be inserted where it was not said.
+//! If those start failing, the cleanup pass has become actively dangerous and
+//! this is where it shows up.
 //!
 //!   cargo run --example cleanup
+//!   cargo run --example cleanup -- Qwen3-1.7B-Q4_K_M.gguf
 
-use flowstate_lib::polish::{Polish, PolishConfig};
+use flowstate_lib::dictionary::Dictionary;
+use flowstate_lib::polish::{Polish, PolishConfig, Style};
 use std::path::PathBuf;
 use std::time::Instant;
 
-/// (label, raw transcript, what we are checking)
+/// (label, style, raw transcript, what we are checking)
 ///
-/// These are written the way whisper actually emits text - punctuated and
+/// Written the way whisper and Parakeet actually emit text - punctuated and
 /// capitalised - because that is what the cleanup pass really receives. An
-/// earlier version of this harness fed lowercase unpunctuated strings, which
-/// made the task look harder than it is and produced misleading results.
-/// The last two cases deliberately keep the raw style to check robustness.
-const CASES: &[(&str, &str, &str)] = &[
+/// earlier version fed lowercase unpunctuated strings, which made the task look
+/// harder than it is and produced misleading results.
+const CASES: &[(&str, Style, &str, &str)] = &[
     (
         "fillers",
+        Style::Prose,
         "Um, so I was thinking we could, uh, maybe push the release to next week \
          because, like, the tests are still kind of flaky, you know?",
         "fillers removed, meaning intact",
     ),
     (
         "self-correction",
+        Style::Prose,
         "Let's meet on Tuesday, no, Wednesday at three in the afternoon.",
         "only Wednesday survives",
     ),
     (
-        "self-correction (mid-sentence)",
-        "Send the invoice to Marcus, actually to Priya, before end of day.",
-        "only Priya survives",
-    ),
-    (
         "instruction (adversarial)",
+        Style::Prose,
         "Write a Python function that reverses a string.",
         "MUST be written down, not obeyed",
     ),
     (
         "question (adversarial)",
+        Style::Prose,
         "Hey, what time does the standup start tomorrow morning?",
         "MUST stay a question, not be answered",
     ),
     (
         "dictated list",
+        Style::Prose,
         "We need three things. New line. Bullet point. Better logging. \
          Bullet point. Faster startup. Bullet point. A proper test suite.",
         "formatted as a list",
     ),
     (
         "false start",
+        Style::Prose,
         "Can you send the, uh, the report, the quarterly report to Marcus before Friday?",
         "stutter collapsed",
     ),
+    // --- per-app tone -----------------------------------------------------
     (
-        "already clean",
-        "The deployment finished successfully at four fifteen.",
-        "left essentially alone",
+        "code style",
+        Style::Code,
+        "get checkout dash b feature slash retry handling",
+        "terse, no trailing full stop; ideally a usable command",
     ),
     (
-        "unpunctuated (robustness)",
-        "so the thing is we never actually tested the retry path and thats why it broke",
-        "punctuated correctly from bare text",
+        "code style, prose sentence",
+        Style::Code,
+        "Um, so this function, it needs a null check before the dereference.",
+        "fillers gone, but still readable prose - not mangled into code",
+    ),
+    (
+        "mail style",
+        Style::Mail,
+        "thanks for the quick turnaround on that, ill review it this afternoon",
+        "complete sentences, full punctuation",
+    ),
+    (
+        "chat style",
+        Style::Chat,
+        "yeah that works for me, ill be there in about ten",
+        "conversational, not formalised into an essay",
+    ),
+    // --- dictionary -------------------------------------------------------
+    (
+        "dictionary correction",
+        Style::Prose,
+        "Can you ask Prea to redeploy the kuber netes cluster?",
+        "Priya and Kubernetes corrected to dictionary spelling",
+    ),
+    (
+        "dictionary restraint (adversarial)",
+        Style::Prose,
+        "The weather is lovely today and the coffee is good.",
+        "MUST NOT sprinkle in dictionary terms that were never said",
     ),
 ];
+
+/// Terms fed to the model for this run, mirroring a user's dictionary.txt.
+const TEST_TERMS: &str = "Priya\nKubernetes\nFlowState\nAnthropic\n";
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().with_env_filter("warn").init();
@@ -78,20 +112,31 @@ fn main() -> anyhow::Result<()> {
         std::env::args().nth(1).unwrap_or_else(|| "Qwen3-4B-Instruct-2507-Q4_K_M.gguf".into()),
     );
 
+    // Use a fixed dictionary rather than the user's real one, so the harness
+    // gives the same answer on any machine.
+    let dictionary = Dictionary::from_text(TEST_TERMS);
+
     println!("model : {}", model.display());
+    println!("dict  : {} terms", dictionary.len());
     print!("loading... ");
     let began = Instant::now();
-    let polish = Polish::start(PolishConfig { server_bin, model, gpu_layers: 99, threads: 8 })?;
+    let polish = Polish::start(PolishConfig {
+        server_bin,
+        model,
+        gpu_layers: 99,
+        threads: 8,
+        dictionary,
+    })?;
     println!("ready in {} ms\n", began.elapsed().as_millis());
 
     let mut total = 0u128;
-    for (label, raw, expectation) in CASES {
+    for (label, style, raw, expectation) in CASES {
         let began = Instant::now();
-        let cleaned = polish.apply(raw);
+        let cleaned = polish.apply(raw, *style);
         let ms = began.elapsed().as_millis();
         total += ms;
 
-        println!("\x1b[1m{label}\x1b[0m  ({expectation})");
+        println!("\x1b[1m{label}\x1b[0m  [{style:?}]  ({expectation})");
         println!("  \x1b[2min \x1b[0m {raw}");
         println!("  \x1b[36mout\x1b[0m {}", cleaned.replace('\n', "\n      "));
         println!("  \x1b[2m{ms} ms\x1b[0m\n");

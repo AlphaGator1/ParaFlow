@@ -155,6 +155,7 @@ impl Asr {
             config.server_bin.display()
         );
         anyhow::ensure!(config.model.exists(), "model not found at {}", config.model.display());
+        sidecar::ensure_port_free(config.backend.name(), PORT)?;
 
         let mut cmd = Command::new(&config.server_bin);
         match config.backend {

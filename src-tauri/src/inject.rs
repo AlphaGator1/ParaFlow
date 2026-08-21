@@ -12,9 +12,14 @@
 use anyhow::{anyhow, Context, Result};
 use std::time::Duration;
 
-use windows::Win32::Foundation::{HANDLE, HWND};
+use windows::core::PWSTR;
+use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+};
+use windows::Win32::System::Threading::{
+    OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+    PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -22,7 +27,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::System::Ole::CF_UNICODETEXT;
-use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+};
 
 /// Time given to the target app to service the paste before we restore the
 /// clipboard. Too short and slow apps (Electron, remote desktops) paste stale
@@ -159,9 +166,8 @@ fn set_clipboard_text(text: &str) -> Result<()> {
     })
 }
 
-/// Title of the focused window. This is the hook for context-aware
-/// formatting later on - dictating into a terminal should not read like
-/// dictating into an email.
+/// Title of the focused window. Useful for logs; too unstable to drive
+/// behaviour, since titles are whatever the app decides to put there.
 pub fn foreground_window_title() -> Option<String> {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -174,5 +180,46 @@ pub fn foreground_window_title() -> Option<String> {
             return None;
         }
         Some(String::from_utf16_lossy(&buf[..len as usize]))
+    }
+}
+
+/// Executable name of the focused window's process, lowercased and without the
+/// `.exe` suffix - e.g. `"code"`, `"windowsterminal"`, `"outlook"`.
+///
+/// This drives per-app tone. The window *title* would be the easy thing to
+/// match on and the wrong one: titles change with the open document, get
+/// localised, and collide across apps. The process name is stable.
+pub fn foreground_process() -> Option<String> {
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_invalid() {
+            return None;
+        }
+
+        let mut pid: u32 = 0;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == 0 {
+            return None;
+        }
+
+        // LIMITED_INFORMATION is the least privilege that can still read an
+        // image name, and unlike PROCESS_QUERY_INFORMATION it succeeds against
+        // processes at a higher integrity level.
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+
+        let mut buf = [0u16; 512];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(
+            handle,
+            PROCESS_NAME_FORMAT(0),
+            PWSTR(buf.as_mut_ptr()),
+            &mut len,
+        );
+        let _ = CloseHandle(handle);
+        ok.ok()?;
+
+        let full = String::from_utf16_lossy(&buf[..len as usize]);
+        let file = full.rsplit(['\\', '/']).next()?;
+        Some(file.trim_end_matches(".exe").trim_end_matches(".EXE").to_lowercase())
     }
 }

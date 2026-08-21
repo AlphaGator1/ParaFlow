@@ -11,6 +11,7 @@ mod sound;
 // Public so `examples/cleanup.rs` can exercise the real prompt rather than a
 // copy of it. The cleanup prompt is the feature; a test harness that drifts
 // from it would be worse than no harness.
+pub mod dictionary;
 pub mod polish;
 
 use anyhow::{anyhow, Result};
@@ -161,7 +162,15 @@ fn start_polish() -> Option<Polish> {
         }
     };
 
-    match Polish::start(PolishConfig { server_bin, model, gpu_layers: 99, threads: 8 }) {
+    let dictionary = dictionary::Dictionary::load();
+
+    match Polish::start(PolishConfig {
+        server_bin,
+        model,
+        gpu_layers: 99,
+        threads: 8,
+        dictionary,
+    }) {
         Ok(p) => Some(p),
         Err(e) => {
             tracing::warn!(error = %e, "cleanup sidecar failed to start; using raw transcripts");

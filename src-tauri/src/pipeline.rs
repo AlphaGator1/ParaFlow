@@ -13,7 +13,7 @@ use crate::asr::Asr;
 use crate::audio::{self, MicSession};
 use crate::hotkey::PttEvent;
 use crate::inject;
-use crate::polish::Polish;
+use crate::polish::{Polish, Style};
 use crate::sound;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError};
@@ -249,13 +249,19 @@ impl Pipeline {
             return Ok(None);
         }
 
+        // Read the target app *before* cleanup: the user is still focused on
+        // it now, and cleanup takes long enough that they could alt-tab away
+        // and have the text styled for the wrong window.
+        let process = inject::foreground_process();
+        let style = Style::for_process(process.as_deref());
+
         // Cleanup is best-effort by construction: `apply` returns the raw
         // transcript on any failure, so this can only improve the text or
         // leave it alone.
         let text = match &self.polish {
             Some(p) => {
                 self.emit(Stage::Polishing);
-                p.apply(&raw)
+                p.apply(&raw, style)
             }
             None => raw.clone(),
         };
@@ -267,7 +273,11 @@ impl Pipeline {
         }
 
         let target = inject::foreground_window_title().unwrap_or_default();
-        tracing::info!(secs, chars = text.len(), %target, "pasting transcript");
+        tracing::info!(
+            secs, chars = text.len(), %target,
+            app = process.as_deref().unwrap_or("?"), ?style,
+            "pasting transcript"
+        );
         inject::paste(&text)?;
 
         Ok(Some(Stage::Done { text, latency_ms: began.elapsed().as_millis() }))

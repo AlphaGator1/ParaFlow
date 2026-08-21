@@ -15,7 +15,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Model = "tdt-0.6b-v3-f16.gguf",
+    [string]$Model = "tdt-0.6b-v3-q8_0.gguf",
     [int]$Port = 8187,
     [int]$Runs = 4
 )
