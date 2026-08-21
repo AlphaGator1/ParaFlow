@@ -117,6 +117,7 @@ pub fn run() {
             setup::purge_incomplete();
 
             if setup::ready(|p| resolve(p).is_ok()) {
+                set_hud_click_through(&handle, true);
                 apply_overlay(&handle, settings::current().overlay);
                 spawn_pipeline(handle);
             } else {
@@ -132,9 +133,27 @@ pub fn run() {
         .expect("error while running ParaFlow");
 }
 
+/// Let the mouse through the overlay, or not.
+///
+/// The HUD has always *looked* click-through - `pointer-events: none` on the
+/// pill - but that is a CSS rule about elements inside the webview and says
+/// nothing about whether Windows routes clicks to the window. Without
+/// `set_ignore_cursor_events` the overlay is a 420x132 always-on-top rectangle
+/// quietly eating clicks near the bottom of the screen. The setup screen lives
+/// in this same window and does need the mouse, so it is a mode, not a
+/// constant.
+fn set_hud_click_through(app: &tauri::AppHandle, through: bool) {
+    let Some(w) = app.get_webview_window("hud") else { return };
+    if let Err(e) = w.set_ignore_cursor_events(through) {
+        tracing::warn!(error = %e, through, "could not set overlay click-through");
+    }
+}
+
 /// Grow the always-on-top HUD into a focusable setup window.
 fn show_setup_window(app: &tauri::AppHandle) {
     let Some(w) = app.get_webview_window("hud") else { return };
+    // Setup is a real form with real buttons; it must receive the mouse.
+    set_hud_click_through(app, false);
     let _ = w.set_size(tauri::LogicalSize::new(620.0_f64, 520.0_f64));
     let _ = w.set_always_on_top(false);
     let _ = w.center();
@@ -206,6 +225,7 @@ fn show_hud_window(app: &tauri::AppHandle) {
     let Some(w) = app.get_webview_window("hud") else { return };
     let _ = w.set_size(tauri::LogicalSize::new(420.0_f64, 132.0_f64));
     let _ = w.set_always_on_top(true);
+    set_hud_click_through(app, true);
     place_hud(app, HudSpot::Bottom);
 }
 

@@ -102,7 +102,7 @@ which is the only way to look at it after the first run. It deletes nothing.
 
 ```powershell
 npm run tauri build
-# -> src-tauri/target/release/bundle/nsis/ParaFlow_0.1.1_x64-setup.exe
+# -> src-tauri/target/release/bundle/nsis/ParaFlow_0.1.2_x64-setup.exe
 ```
 
 **2.8 MB.** Everything else arrives on first run.
@@ -227,7 +227,8 @@ Tray → **Settings…**, or edit `%LOCALAPPDATA%\ParaFlow\settings.json` by han
   "idleSeconds": 30,
   "cleanup": true,
   "chimes": true,
-  "handsFree": true
+  "handsFree": true,
+  "autoHide": true
 }
 ```
 

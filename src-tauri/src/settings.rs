@@ -65,6 +65,10 @@ pub struct Settings {
     /// Double-tap the chord to lock recording on until the next press. Off
     /// means the chord only ever works press-and-hold.
     pub hands_free: bool,
+    /// Paint the overlay only while something is happening, rather than
+    /// leaving it on screen all day. Independent of [`Overlay`], which decides
+    /// *where* it appears when it does.
+    pub auto_hide: bool,
 }
 
 impl Default for Settings {
@@ -76,6 +80,7 @@ impl Default for Settings {
             cleanup: true,
             chimes: true,
             hands_free: true,
+            auto_hide: true,
         }
     }
 }
@@ -179,6 +184,7 @@ mod tests {
         assert_eq!(s.idle_seconds, 30);
         assert!(s.cleanup);
         assert!(s.hands_free);
+        assert!(s.auto_hide, "an overlay parked on screen all day is not a sensible default");
         assert_eq!(s.overlay, Overlay::Bottom);
     }
 
@@ -231,6 +237,7 @@ mod tests {
             cleanup: false,
             chimes: false,
             hands_free: false,
+            auto_hide: false,
         };
         let text = serde_json::to_string(&original).unwrap();
         let back: Settings = serde_json::from_str(&text).unwrap();
@@ -240,5 +247,6 @@ mod tests {
         assert!(!back.cleanup);
         assert!(!back.chimes);
         assert!(!back.hands_free);
+        assert!(!back.auto_hide);
     }
 }

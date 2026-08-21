@@ -13,6 +13,7 @@ type Settings = {
   cleanup: boolean;
   chimes: boolean;
   handsFree: boolean;
+  autoHide: boolean;
 };
 
 const OVERLAY_LABELS: Record<Overlay, string> = {
@@ -258,6 +259,22 @@ export default function Settings() {
             </option>
           ))}
         </select>
+
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={s.autoHide}
+            onChange={(e) => update("autoHide", e.target.checked)}
+          />
+          <span>
+            Only show it when ParaFlow is doing something
+            <em>
+              Otherwise the panel sits on your screen all day. Worth leaving on for OLED
+              screens, where a fixed bright shape can burn in. It always stays visible while
+              the microphone is open, however you set this.
+            </em>
+          </span>
+        </label>
       </section>
 
       {/* --- microphone ----------------------------------------------- */}

@@ -485,6 +485,23 @@
     Hover over it to see which microphone is in use.
   </p>
 
+  <h3>It only appears when something is happening</h3>
+  <p>
+    By default the panel draws nothing at all while ParaFlow is idle and the microphone is
+    shut — so it is not sitting on your screen all day. It appears the moment you press the
+    key and fades back out afterwards. On an OLED screen this matters: a fixed bright shape
+    left in one place for hours can burn in.
+  </p>
+  <p>
+    <strong>One exception, deliberately.</strong> While the microphone is open it stays on
+    screen even when idle, counting down to close. A panel that hid itself while still
+    listening would be precisely the wrong thing to build.
+  </p>
+  <p>
+    Turn it off in <strong>Settings → Overlay → Only show it when ParaFlow is doing
+    something</strong> if you would rather see it all the time.
+  </p>
+
   <h3>Moving it, or hiding it</h3>
   <p>
     Click the ParaFlow icon in the system tray and choose <strong>Overlay position</strong> — Bottom,
@@ -760,6 +777,12 @@
             become your only signal that the microphone is open.</td>
         </tr>
         <tr>
+          <td><strong>Only show it when ParaFlow is doing something</strong></td>
+          <td>On by default. The panel draws nothing while idle, so nothing sits on your screen
+            between dictations — worth keeping on for an OLED display. It stays visible
+            whenever the microphone is open, however this is set.</td>
+        </tr>
+        <tr>
           <td><strong>Close after … seconds</strong></td>
           <td>How long the microphone stays open with no dictation before it releases itself.
             30 seconds by default; 5 seconds to an hour.</td>
@@ -999,7 +1022,7 @@
 </section>
 
 <footer class="colophon">
-  <span>ParaFlow 0.1.1</span>
+  <span>ParaFlow 0.1.2</span>
   <span>Local-first push-to-talk dictation for Windows 11</span>
   <span>Nothing you say leaves this computer</span>
 </footer>

@@ -41,6 +41,10 @@ export default function App() {
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null | undefined>(undefined);
   // The live push-to-talk chord, so the idle hint never advertises stale keys.
   const [hotkey, setHotkey] = useState<string[]>(["Ctrl", "Win"]);
+  // Paint nothing while there is nothing to say. The window stays where it is;
+  // it simply stops drawing, which is what keeps a static panel off an OLED
+  // all day without any show/hide dance that could steal focus mid-paste.
+  const [autoHide, setAutoHide] = useState(true);
   const resetTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -50,13 +54,20 @@ export default function App() {
       // the pipeline may well be running fine.
       .catch(() => setSetupStatus(null));
 
-    invoke<{ hotkey: string[] }>("get_settings")
-      .then((s) => setHotkey(s.hotkey))
+    invoke<{ hotkey: string[]; autoHide: boolean }>("get_settings")
+      .then((s) => {
+        setHotkey(s.hotkey);
+        setAutoHide(s.autoHide);
+      })
       .catch(() => {});
 
     const unDone = listen("paraflow://setup-done", () => setSetupStatus(null));
-    const unSettings = listen<{ hotkey: string[] }>("paraflow://settings-changed", (e) =>
-      setHotkey(e.payload.hotkey),
+    const unSettings = listen<{ hotkey: string[]; autoHide: boolean }>(
+      "paraflow://settings-changed",
+      (e) => {
+        setHotkey(e.payload.hotkey);
+        setAutoHide(e.payload.autoHide);
+      },
     );
     return () => {
       unDone.then((f) => f());
@@ -109,6 +120,15 @@ export default function App() {
   // flash up in front of the setup screen on first run.
   if (setupStatus === undefined) return null;
   if (setupStatus) return <Setup status={setupStatus} />;
+
+  // Dormant: idle, and the microphone is shut. Draw nothing at all.
+  //
+  // `!mic.open` is not an optimisation, it is the rule. An open microphone is
+  // the one state that must always be visible - the LIVE badge is half of the
+  // promise this app makes, and a panel that hid itself while still listening
+  // would be the worst version of the dishonest-interface bug this project
+  // keeps having to fix. So idle-with-mic-open stays on screen, counting down.
+  if (autoHide && stage.kind === "idle" && !mic.open) return null;
 
   return (
     <div className="hud" data-stage={stage.kind}>

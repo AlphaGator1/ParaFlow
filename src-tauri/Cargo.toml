@@ -1,6 +1,6 @@
 [package]
 name = "paraflow"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local-first push-to-talk dictation for Windows"
 edition = "2021"
 rust-version = "1.77"
