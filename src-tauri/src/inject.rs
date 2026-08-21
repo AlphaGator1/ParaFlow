@@ -55,7 +55,22 @@ pub fn paste(text: &str) -> Result<()> {
     std::thread::sleep(PASTE_SETTLE);
 
     if let Some(prev) = saved {
-        let _ = set_clipboard_text(&prev);
+        // Only put the old contents back if ours is still what is there.
+        //
+        // The settle above is a window in which the user can perfectly well
+        // press Ctrl+C, and restoring blindly would throw away whatever they
+        // just deliberately copied. Leaving a transcript on the clipboard is a
+        // mild annoyance; silently eating a copy is data loss, so anything
+        // other than "still ours" means hands off - including a read that
+        // fails, since `with_clipboard` already retries and a failure past
+        // that is not a state to guess about.
+        match get_clipboard_text() {
+            Ok(Some(current)) if current == text => {
+                let _ = set_clipboard_text(&prev);
+            }
+            Ok(_) => tracing::debug!("clipboard changed during paste; leaving it as the user left it"),
+            Err(e) => tracing::debug!(error = %e, "could not read the clipboard back; not restoring"),
+        }
     }
     Ok(())
 }
