@@ -9,6 +9,14 @@ rust-version = "1.77"
 name = "flowstate_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Switches the webview from `devUrl` (the vite dev server) to the assets
+# embedded in the binary. Without it a release build still points at
+# http://localhost:1420 and shows ERR_CONNECTION_REFUSED when vite is not
+# running. `tauri build` enables this for you; a bare `cargo run --release`
+# does not, so pass `--features custom-protocol`.
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

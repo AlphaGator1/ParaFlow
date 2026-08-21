@@ -308,8 +308,15 @@ expensive stage in the pipeline and is in fact ~1% of it.
 
 ```powershell
 npm run build
-cd src-tauri; cargo run --release --no-default-features
+cd src-tauri; cargo run --release --features custom-protocol
 ```
+
+`--features custom-protocol` is not optional. It is what switches the webview
+from `devUrl` to the assets embedded in the binary; without it the window comes
+up showing `ERR_CONNECTION_REFUSED` against `http://localhost:1420`, because
+the pipeline starts fine and only the UI is looking for a dev server that is
+not there. `tauri build` passes it for you; a bare `cargo run --release` does
+not.
 
 `npm run tauri dev -- --release` is for iterating on the UI. Be aware its
 watcher rebuilds and **relaunches** on every source edit, so editing Rust while
