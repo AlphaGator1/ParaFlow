@@ -223,15 +223,21 @@ A typical dictated sentence is 3–5 s, so transcription lands well under the
 ~500 ms budget where push-to-talk stops feeling like a round trip and starts
 feeling like typing.
 
-End-to-end, measured on live speech (4.63 s utterance, 48 kHz stereo webcam mic):
+End-to-end on live speech, release build, Parakeet backend
+(18.65 s utterance, 48 kHz stereo webcam mic):
 
 ```
-  key release  →  capture + resample to 16 kHz     85.6 ms
-               →  GPU transcription                74.4 ms
-               →  LLM cleanup                     ~62.0 ms
+  key release  →  capture + resample to 16 kHz      4.5 ms    2%
+               →  GPU transcription                92.1 ms   32%
+               →  LLM cleanup                     195.0 ms   67%
                ─────────────────────────────────────────
-                  release to pasted text          ~222 ms
+                  release to pasted text          291.6 ms
 ```
+
+Note the shape: **cleanup is now two thirds of the budget** and transcription
+is no longer the bottleneck. Any further latency work belongs there — a smaller
+instruction model, or skipping cleanup entirely for very short utterances where
+there is little to clean.
 
 ### Run the release build
 
@@ -276,16 +282,18 @@ produced a byte-identical transcript on this sample, punctuation included.
 Quantizing to q8_0 cost nothing measurable against f16 on either axis, so the
 smaller file is the default.
 
-Two things worth knowing before trusting that table:
+Confirmed on live dictation, not just the benchmark clip: an 18.65 s utterance
+transcribed in 92 ms, which normalises to **4.9 ms per second of audio against
+whisper's 8.2** — about 1.7x faster on real speech. Transcript quality was
+reported as indistinguishable, proper nouns included.
 
-- **It is one easy sample.** The JFK clip is famous enough to plausibly sit in
-  training data. The latency numbers are measured and solid; the accuracy
-  comparison is a smoke test, not an evaluation. This is why whisper stays
-  selectable rather than being deleted.
+One caveat remains:
+
 - **Parakeet has no prompt biasing.** Its only knobs are `--decoder`, `--lang`,
   and `--stream`. whisper-server's `--prompt` can bias decoding toward supplied
   vocabulary; Parakeet has no equivalent, which changes how a personal
-  dictionary has to be built (see `NEXT.md`).
+  dictionary has to be built (see `NEXT.md`). This is the main reason whisper
+  stays selectable rather than being deleted.
 
 Among the whisper models, the counterintuitive result is that **an English-only
 model does not reduce latency** — `small.en` is slower than the multilingual
