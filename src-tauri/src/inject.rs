@@ -23,8 +23,8 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -60,11 +60,34 @@ pub fn paste(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Synthesise key-up for every modifier, so nothing is stuck down when we paste.
+/// Synthesise key-up for any modifier that is *actually* still held.
+///
+/// Releasing all of them unconditionally looks harmless and is not. A key-up
+/// with no matching key-down is still an event, and Windows reads a lone Alt
+/// release as "Alt was tapped" - which activates the menu bar. In Notepad that
+/// lights up the KeyTip hints (F, E, V...) and eats the Ctrl+V that follows, so
+/// dictation silently pasted nothing. Apps that ignore a stray Alt, like Word
+/// and VS Code, worked fine, which made it look app-specific rather than ours.
+///
+/// Querying the real key state first means we only ever send a release for
+/// something genuinely down, so the common case sends nothing at all.
 fn release_modifiers() -> Result<()> {
-    let keys = [VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN];
-    let inputs: Vec<INPUT> = keys.iter().map(|k| key_input(*k, true)).collect();
-    send(&inputs)
+    const MODIFIERS: [VIRTUAL_KEY; 5] = [VK_CONTROL, VK_SHIFT, VK_MENU, VK_LWIN, VK_RWIN];
+
+    let held: Vec<INPUT> = MODIFIERS
+        .iter()
+        .filter(|k| {
+            // High bit set means the key is currently down.
+            unsafe { GetAsyncKeyState(k.0 as i32) as u16 & 0x8000 != 0 }
+        })
+        .map(|k| key_input(*k, true))
+        .collect();
+
+    if held.is_empty() {
+        return Ok(());
+    }
+    tracing::debug!(count = held.len(), "releasing modifiers still held before paste");
+    send(&held)
 }
 
 fn send_ctrl_v() -> Result<()> {

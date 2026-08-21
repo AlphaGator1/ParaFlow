@@ -102,6 +102,7 @@ pub fn run() {
             setup::purge_incomplete();
 
             if setup::ready(|p| resolve(p).is_ok()) {
+                place_hud(&handle, HudSpot::Bottom);
                 spawn_pipeline(handle);
             } else {
                 // Nothing to dictate with yet. Grow the HUD into a real window
@@ -126,12 +127,63 @@ fn show_setup_window(app: &tauri::AppHandle) {
     let _ = w.set_focus();
 }
 
+/// Where the HUD sits on screen.
+///
+/// It is click-through by design - a focusable overlay would receive its own
+/// paste - so it cannot be dragged. Presets are the honest alternative: they
+/// keep the overlay passive while still letting people move it off whatever it
+/// happens to be covering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HudSpot {
+    Bottom,
+    Top,
+    Centre,
+}
+
+impl HudSpot {
+    fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "pos-bottom" => Some(HudSpot::Bottom),
+            "pos-top" => Some(HudSpot::Top),
+            "pos-centre" => Some(HudSpot::Centre),
+            _ => None,
+        }
+    }
+}
+
+/// Place the HUD, defaulting to bottom-centre.
+///
+/// Dead centre is the worst possible spot for a passive overlay: it is exactly
+/// where the text being dictated into tends to be.
+fn place_hud(app: &tauri::AppHandle, spot: HudSpot) {
+    let Some(w) = app.get_webview_window("hud") else { return };
+    let Ok(Some(monitor)) = w.current_monitor() else {
+        let _ = w.center();
+        return;
+    };
+
+    let scale = monitor.scale_factor();
+    let screen = monitor.size().to_logical::<f64>(scale);
+    let pos = monitor.position().to_logical::<f64>(scale);
+    let (win_w, win_h) = (420.0_f64, 132.0_f64);
+    let margin = 48.0_f64;
+
+    let x = pos.x + (screen.width - win_w) / 2.0;
+    let y = match spot {
+        // Above the taskbar, out of the way of whatever is being typed into.
+        HudSpot::Bottom => pos.y + screen.height - win_h - margin,
+        HudSpot::Top => pos.y + margin,
+        HudSpot::Centre => pos.y + (screen.height - win_h) / 2.0,
+    };
+    let _ = w.set_position(tauri::LogicalPosition::new(x, y));
+}
+
 /// Shrink back to the passive overlay once setup is done.
 fn show_hud_window(app: &tauri::AppHandle) {
     let Some(w) = app.get_webview_window("hud") else { return };
     let _ = w.set_size(tauri::LogicalSize::new(420.0_f64, 132.0_f64));
     let _ = w.set_always_on_top(true);
-    let _ = w.center();
+    place_hud(app, HudSpot::Bottom);
 }
 
 /// True once the pipeline thread has been started, so setup completing twice
@@ -300,25 +352,86 @@ fn start_polish() -> Option<Polish> {
 }
 
 fn build_tray(app: &tauri::AppHandle) -> Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show ParaFlow", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+    use tauri::menu::{PredefinedMenuItem, Submenu};
+
+    let show = MenuItem::with_id(app, "show", "Show overlay", true, None::<&str>)?;
+
+    let pos = Submenu::with_items(
+        app,
+        "Overlay position",
+        true,
+        &[
+            &MenuItem::with_id(app, "pos-bottom", "Bottom", true, None::<&str>)?,
+            &MenuItem::with_id(app, "pos-top", "Top", true, None::<&str>)?,
+            &MenuItem::with_id(app, "pos-centre", "Centre", true, None::<&str>)?,
+        ],
+    )?;
+
+    let dict = MenuItem::with_id(app, "dictionary", "Edit personal dictionary…", true, None::<&str>)?;
+    let folder = MenuItem::with_id(app, "folder", "Open data folder", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit ParaFlow", true, None::<&str>)?;
+
+    let menu = Menu::with_items(
+        app,
+        &[
+            &show,
+            &pos,
+            &PredefinedMenuItem::separator(app)?,
+            &dict,
+            &folder,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
 
     TrayIconBuilder::with_id("paraflow-tray")
         .icon(app.default_window_icon().cloned().ok_or_else(|| anyhow!("no default icon"))?)
         .tooltip("ParaFlow - hold Ctrl+Win to dictate")
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(w) = app.get_webview_window("hud") {
-                    let _ = w.show();
-                }
+        .on_menu_event(|app, event| {
+            let id = event.id.as_ref();
+            if let Some(spot) = HudSpot::from_id(id) {
+                place_hud(app, spot);
+                return;
             }
-            "quit" => app.exit(0),
-            _ => {}
+            match id {
+                "show" => {
+                    if let Some(w) = app.get_webview_window("hud") {
+                        let _ = w.show();
+                    }
+                }
+                // Opening the file in the user's default editor is a real
+                // feature, not a placeholder: the dictionary is a commented
+                // plain-text list precisely so it can be edited this way.
+                "dictionary" => open_dictionary(app),
+                "folder" => {
+                    if let Some(root) = setup::install_root() {
+                        let _ = tauri_plugin_opener::open_path(root, None::<&str>);
+                    }
+                }
+                "quit" => app.exit(0),
+                _ => {}
+            }
         })
         .build(app)?;
 
     Ok(())
+}
+
+/// Open the personal dictionary for editing, creating it if absent.
+fn open_dictionary(app: &tauri::AppHandle) {
+    let Some(path) = dictionary::Dictionary::path() else { return };
+    if !path.exists() {
+        // Loading writes the commented template on first use.
+        let _ = dictionary::Dictionary::load();
+    }
+    if let Err(e) = tauri_plugin_opener::open_path(&path, None::<&str>) {
+        tracing::warn!(error = %e, path = %path.display(), "could not open dictionary");
+        return;
+    }
+    // Terms are read once at startup so they stay inside the prompt cache, so
+    // an edit made now will not apply until ParaFlow restarts. Say so rather
+    // than let someone wonder why their new word is ignored.
+    let _ = app.emit("paraflow://notice", "Dictionary opened. Restart ParaFlow to apply changes.");
 }
