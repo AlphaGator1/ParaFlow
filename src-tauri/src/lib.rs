@@ -220,6 +220,12 @@ fn spawn_pipeline(handle: tauri::AppHandle) {
         tracing::warn!("pipeline already running; ignoring duplicate start");
         return;
     }
+    // Say so before the slow part begins. Loading two models onto the GPU takes
+    // seconds, the keyboard hook is not installed until they are up, and the
+    // overlay used to spend that whole window claiming to be ready - so the
+    // first press of a fresh launch vanished with no chime and no explanation.
+    let _ = handle.emit("flow://stage", pipeline::Stage::Starting);
+
     // The whole audio path lives on this one thread: cpal's Stream is !Send on
     // Windows, so the capture device must be opened on the same thread that
     // ultimately owns it.

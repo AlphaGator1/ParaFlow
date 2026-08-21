@@ -50,6 +50,11 @@ const MAX_LATCHED: Duration = Duration::from_secs(120);
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Stage {
+    /// Models are loading and the keyboard hook is not installed yet, so the
+    /// push-to-talk key genuinely does nothing. Distinct from `Idle` because
+    /// the overlay used to claim "Ready" through this whole window and swallow
+    /// the user's first press without a sound.
+    Starting,
     Idle,
     /// The microphone is being opened - first press of a burst.
     Waking,

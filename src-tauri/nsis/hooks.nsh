@@ -31,4 +31,40 @@
   ; worse than a missing one.
   Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME} User Guide.lnk"
   Delete "$SMPROGRAMS\${PRODUCTNAME} User Guide.lnk"
+
+  ; --- make "delete application data" actually mean something ---------------
+  ;
+  ; Tauri's template honours that checkbox by removing $LOCALAPPDATA\<bundle
+  ; id>, which for us is `com.paraflow.dictation` - a directory that has never
+  ; existed. Everything real lives in $LOCALAPPDATA\ParaFlow, so ticking the box
+  ; removed nothing at all and left several gigabytes behind while reporting
+  ; success.
+  ;
+  ; Keeping the models across an uninstall is genuinely what most people want,
+  ; since a reinstall would otherwise re-download them. The problem was only
+  ; ever that the checkbox promised otherwise. So: ask plainly, name the
+  ; directory and what is in it, and default to keeping.
+  ;
+  ; Tauri has already called SetShellVarContext current by the time this runs,
+  ; but only on the ticked path - set it here too so $LOCALAPPDATA cannot
+  ; resolve against the wrong profile.
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    SetShellVarContext current
+    ${If} ${FileExists} "$LOCALAPPDATA\${PRODUCTNAME}\*.*"
+      MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 \
+        "Also delete ${PRODUCTNAME}'s downloaded data?$\n$\n\
+         This permanently removes, from$\n\
+         $LOCALAPPDATA\${PRODUCTNAME}$\n$\n\
+         $\t- the speech recognition and cleanup models (several GB)$\n\
+         $\t- your settings$\n\
+         $\t- your personal dictionary$\n$\n\
+         Installing ${PRODUCTNAME} again later would download the models again.$\n$\n\
+         Choose No to keep them." \
+        IDNO ParaFlowKeepData
+        DetailPrint "Removing $LOCALAPPDATA\${PRODUCTNAME}"
+        RMDir /r "$LOCALAPPDATA\${PRODUCTNAME}"
+      ParaFlowKeepData:
+    ${EndIf}
+  ${EndIf}
 !macroend

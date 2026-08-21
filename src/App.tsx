@@ -5,6 +5,7 @@ import Setup, { type SetupStatus } from "./Setup";
 import "./styles.css";
 
 type Stage =
+  | { kind: "starting" }
   | { kind: "idle" }
   | { kind: "waking" }
   | { kind: "listening" }
@@ -30,7 +31,10 @@ function mmss(total: number) {
 }
 
 export default function App() {
-  const [stage, setStage] = useState<Stage>({ kind: "idle" });
+  // Starts as "starting", not "idle". The backend emits Stage::Starting, but an
+  // event fired before the webview has subscribed is simply lost - so the
+  // honest default is the state we are actually in until told otherwise.
+  const [stage, setStage] = useState<Stage>({ kind: "starting" });
   const [mic, setMic] = useState<Mic>({ open: false, device: "", closesInS: 0 });
   const [bars, setBars] = useState<number[]>(() => new Array(BAR_COUNT).fill(0));
   // undefined while we ask the backend; null once setup is not needed.
@@ -77,6 +81,14 @@ export default function App() {
 
     const unMic = listen<Mic>("flow://mic", (e) => setMic(e.payload));
 
+    // Without this a failed start left the overlay saying "Starting…" forever.
+    // Not cleared on a timer: the pipeline is not coming back, and pretending
+    // otherwise is how the last few of these bugs happened.
+    const unFatal = listen<string>("paraflow://fatal", (e) => {
+      window.clearTimeout(resetTimer.current);
+      setStage({ kind: "error", message: e.payload });
+    });
+
     const unLevel = listen<{ peak: number }>("flow://level", (e) => {
       // Speech peaks are small and clumped near zero; a square root spreads
       // them across the bar range so the meter actually moves.
@@ -88,6 +100,7 @@ export default function App() {
       unStage.then((f) => f());
       unMic.then((f) => f());
       unLevel.then((f) => f());
+      unFatal.then((f) => f());
       window.clearTimeout(resetTimer.current);
     };
   }, []);
@@ -154,6 +167,7 @@ function Visual({ stage, bars }: { stage: Stage; bars: number[] }) {
           ))}
         </div>
       );
+    case "starting":
     case "waking":
     case "transcribing":
     case "polishing":
@@ -169,6 +183,13 @@ function Visual({ stage, bars }: { stage: Stage; bars: number[] }) {
 
 function Label({ stage, mic, hotkey }: { stage: Stage; mic: Mic; hotkey: string[] }) {
   switch (stage.kind) {
+    case "starting":
+      return (
+        <>
+          <div className="title">Starting…</div>
+          <div className="sub">Loading speech models — the key won't work yet</div>
+        </>
+      );
     case "idle":
       return (
         <>

@@ -116,8 +116,19 @@ uninstall leaves an orphaned data folder with no app in it. `perMachine`
 installs to `Program Files` and keeps the two apart, at the cost of one
 elevation prompt.
 
-Data deliberately survives an uninstall, so reinstalling does not re-download
-several gigabytes. To remove it too:
+Data survives an uninstall by default, so reinstalling does not re-download
+several gigabytes.
+
+**The "delete application data" checkbox used to be a lie.** Tauri's template
+honours it by removing `$LOCALAPPDATA\<bundle id>` - for us
+`com.paraflow.dictation`, a directory that has never existed - while everything
+real sits in `$LOCALAPPDATA\ParaFlow`. Ticking the box removed nothing and
+reported success. `NSIS_HOOK_POSTUNINSTALL` now handles it, and because this is
+an irreversible multi-gigabyte delete it asks first, naming the directory and
+listing what goes with it (models, settings, dictionary). The dialog defaults to
+*No*.
+
+To remove the data by hand instead:
 
 ```powershell
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\ParaFlow"

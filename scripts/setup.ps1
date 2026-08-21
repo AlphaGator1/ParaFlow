@@ -110,8 +110,9 @@ Get-IfMissing "$hf/ggml-base.en.bin" "$models\ggml-base.en.bin" "base.en (small 
 if (-not $SmallOnly) {
     Get-IfMissing "$hf/ggml-large-v3-turbo.bin" "$models\ggml-large-v3-turbo.bin" "large-v3-turbo (whisper fallback)"
 }
-# Silero VAD, used to trim leading/trailing silence before the encoder runs.
-Get-IfMissing "$hf/ggml-silero-v5.1.2.bin" "$models\ggml-silero-v5.1.2.bin" "Silero VAD"
+# Silero VAD was fetched here to trim silence before the encoder. Nothing ever
+# wired it up, and it stopped being worth wiring up once Parakeet brought
+# transcription down to ~50 ms - so it is no longer downloaded.
 
 if (-not $NoCleanup) {
     Get-IfMissing `
