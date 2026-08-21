@@ -1,0 +1,887 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ParaFlow — User Guide</title>
+<style>
+  /* Light is the default: this opens in a browser, alongside ordinary pages.
+     The dark palette borrows the app's own violet/teal so the guide and the
+     overlay read as one product. */
+  :root {
+    --bg:        #fbfaff;
+    --surface:   #ffffff;
+    --sunken:    #f3f1fb;
+    --ink:       #1a1730;
+    --muted:     #5f5980;
+    --faint:     #8b85a8;
+    --rule:      #e4e0f2;
+    --accent:    #5b3fd6;
+    --accent-dim:#efeaff;
+    --live:      #0d8f7a;
+    --live-dim:  #e2f7f2;
+    --warn:      #a8541a;
+    --warn-dim:  #fdf0e4;
+    --shadow:    0 1px 2px rgba(26,23,48,.06), 0 8px 24px rgba(26,23,48,.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:        #0e0c1c;
+      --surface:   #16132b;
+      --sunken:    #1d1937;
+      --ink:       #f0eeff;
+      --muted:     #a49fc4;
+      --faint:     #7d78a0;
+      --rule:      #2b2650;
+      --accent:    #c4a8ff;
+      --accent-dim:#241f47;
+      --live:      #5eead4;
+      --live-dim:  #10312e;
+      --warn:      #f0b27a;
+      --warn-dim:  #34240f;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 12px 32px rgba(0,0,0,.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 1.5rem; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 16px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 0 32px 96px;
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 56px;
+    align-items: start;
+  }
+
+  /* --- masthead ------------------------------------------------------ */
+
+  header.masthead {
+    grid-column: 1 / -1;
+    padding: 64px 0 40px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 48px;
+  }
+  .wordmark {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .wordmark svg { flex: none; }
+  .wordmark h1 {
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    font-size: 2.1rem;
+    font-weight: 650;
+    letter-spacing: -.02em;
+    margin: 0;
+  }
+  .wordmark .kind {
+    font-size: .95rem;
+    color: var(--faint);
+    border-left: 1px solid var(--rule);
+    padding-left: 14px;
+    margin-left: 4px;
+  }
+  .lede {
+    font-size: 1.32rem;
+    line-height: 1.5;
+    max-width: 40ch;
+    margin: 0 0 14px;
+    letter-spacing: -.01em;
+  }
+  .sublede { color: var(--muted); max-width: 62ch; margin: 0; }
+
+  /* --- contents ------------------------------------------------------ */
+
+  nav.toc { position: sticky; top: 32px; font-size: .9rem; }
+  nav.toc h2 {
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--faint);
+    font-weight: 650;
+    margin: 0 0 14px;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; }
+  nav.toc li { counter-increment: toc; margin-bottom: 3px; }
+  nav.toc a {
+    display: block;
+    padding: 5px 10px 5px 30px;
+    border-radius: 7px;
+    color: var(--muted);
+    text-decoration: none;
+    position: relative;
+    line-height: 1.4;
+  }
+  nav.toc a::before {
+    content: counter(toc);
+    position: absolute;
+    left: 10px;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  nav.toc a:hover { background: var(--accent-dim); color: var(--accent); }
+
+  /* --- prose --------------------------------------------------------- */
+
+  main { min-width: 0; }
+  section { margin-bottom: 60px; scroll-margin-top: 24px; }
+  section:last-child { margin-bottom: 0; }
+
+  h2 {
+    font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+    font-size: 1.55rem;
+    font-weight: 620;
+    letter-spacing: -.018em;
+    margin: 0 0 6px;
+    line-height: 1.25;
+  }
+  h2 .num {
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    margin-right: 12px;
+    font-weight: 500;
+  }
+  h3 {
+    font-size: 1.02rem;
+    font-weight: 650;
+    margin: 30px 0 8px;
+    letter-spacing: -.005em;
+  }
+  .standfirst { color: var(--muted); margin: 0 0 24px; max-width: 62ch; }
+  p { margin: 0 0 15px; max-width: 68ch; }
+  a { color: var(--accent); }
+
+  ol.steps { counter-reset: step; list-style: none; margin: 0 0 20px; padding: 0; }
+  ol.steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 0 0 18px 46px;
+    max-width: 62ch;
+  }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 1px;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--accent-dim);
+    color: var(--accent);
+    display: grid;
+    place-items: center;
+    font-size: .85rem;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+  }
+  ol.steps li:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 13.5px;
+    top: 33px;
+    bottom: 3px;
+    width: 1px;
+    background: var(--rule);
+  }
+  ol.steps strong { font-weight: 650; }
+  ol.steps .aside { display: block; color: var(--muted); font-size: .93rem; }
+
+  ul { margin: 0 0 15px; padding-left: 22px; max-width: 66ch; }
+  ul li { margin-bottom: 7px; }
+
+  kbd {
+    font-family: inherit;
+    font-size: .85em;
+    font-weight: 600;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
+  code {
+    font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+    font-size: .88em;
+    background: var(--sunken);
+    border-radius: 5px;
+    padding: 1.5px 6px;
+    word-break: break-word;
+  }
+
+  /* --- tables -------------------------------------------------------- */
+
+  .table-wrap { overflow-x: auto; margin: 0 0 20px; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: .95rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  th {
+    text-align: left;
+    font-size: .72rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--faint);
+    font-weight: 650;
+    padding: 11px 16px;
+    background: var(--sunken);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  td { padding: 13px 16px; vertical-align: top; border-bottom: 1px solid var(--rule); }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { width: 38%; }
+  table.wide td:first-child { width: 47%; }
+  .said { color: var(--muted); font-style: italic; }
+  .typed { font-weight: 500; }
+  .typed .gloss { font-style: normal; color: var(--faint); font-weight: 400; }
+
+  /* --- callouts ------------------------------------------------------ */
+
+  .note {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-dim);
+    padding: 14px 18px;
+    border-radius: 0 9px 9px 0;
+    margin: 0 0 20px;
+    max-width: 66ch;
+  }
+  .note p:last-child { margin-bottom: 0; }
+  .note.privacy { border-left-color: var(--live); background: var(--live-dim); }
+  .note.warn { border-left-color: var(--warn); background: var(--warn-dim); }
+  .note strong { font-weight: 650; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    padding: 2px 9px 2px 7px;
+    border-radius: 20px;
+    background: var(--live-dim);
+    color: var(--live);
+    vertical-align: 1px;
+  }
+  .badge::before {
+    content: "";
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .badge.off { background: var(--sunken); color: var(--faint); }
+
+  footer.colophon {
+    grid-column: 1 / -1;
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    color: var(--faint);
+    font-size: .88rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+  }
+
+  /* --- narrow -------------------------------------------------------- */
+
+  @media (max-width: 900px) {
+    .page { grid-template-columns: 1fr; gap: 0; padding: 0 22px 64px; }
+    header.masthead { padding-top: 44px; margin-bottom: 32px; }
+    nav.toc {
+      position: static;
+      margin-bottom: 48px;
+      padding: 18px 16px;
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+    }
+    nav.toc ol { columns: 2; column-gap: 20px; }
+    .lede { font-size: 1.18rem; }
+  }
+  @media (max-width: 560px) {
+    nav.toc ol { columns: 1; }
+    td:first-child, table.wide td:first-child { width: auto; }
+  }
+
+  /* --- print --------------------------------------------------------- */
+
+  @media print {
+    :root { --shadow: none; }
+    body { background: #fff; color: #000; font-size: 11pt; }
+    .page { display: block; max-width: none; padding: 0; }
+    nav.toc { display: none; }
+    section { page-break-inside: avoid; margin-bottom: 28px; }
+    table { box-shadow: none; }
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header class="masthead">
+  <div class="wordmark">
+    <svg width="34" height="34" viewBox="0 0 34 34" fill="none" aria-hidden="true">
+      <rect width="34" height="34" rx="9" fill="var(--accent)" opacity=".14"/>
+      <g fill="var(--accent)">
+        <rect x="8"  y="14" width="2.6" height="6"  rx="1.3"/>
+        <rect x="13" y="10" width="2.6" height="14" rx="1.3"/>
+        <rect x="18" y="7"  width="2.6" height="20" rx="1.3"/>
+        <rect x="23" y="12" width="2.6" height="10" rx="1.3"/>
+      </g>
+    </svg>
+    <h1>ParaFlow</h1>
+    <span class="kind">User guide</span>
+  </div>
+  <p class="lede">Hold a key, say what you want written, and let go.</p>
+  <p class="sublede">
+    ParaFlow types your words wherever your cursor already is — an email, a chat box, a code
+    editor, a search field. There is no window to switch to and nothing to paste. Everything
+    runs on this computer, and your voice never leaves it.
+  </p>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#start">Getting started</a></li>
+    <li><a href="#overlay">Reading the overlay</a></li>
+    <li><a href="#microphone">When the mic is on</a></li>
+    <li><a href="#cleanup">What cleanup does</a></li>
+    <li><a href="#tone">Where you are typing</a></li>
+    <li><a href="#dictionary">Personal dictionary</a></li>
+    <li><a href="#settings">Settings</a></li>
+    <li><a href="#hotkey">Changing the key</a></li>
+    <li><a href="#trouble">If something goes wrong</a></li>
+    <li><a href="#privacy">Your privacy</a></li>
+    <li><a href="#files">Where files live</a></li>
+    <li><a href="#uninstall">Uninstalling</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- ================================================================= -->
+<section id="start">
+  <h2><span class="num">1</span>Getting started</h2>
+  <p class="standfirst">Click into whatever you want to write in, then:</p>
+
+  <ol class="steps">
+    <li>
+      <strong>Hold down <kbd>Ctrl</kbd> + <kbd>Win</kbd>.</strong>
+      <span class="aside">That is the starting combination. You can change it — see
+      <a href="#hotkey">Changing the key</a>.</span>
+    </li>
+    <li>
+      <strong>Wait for the short rising chime.</strong>
+      <span class="aside">That is your microphone opening. The very first press of a session
+      takes a moment; every press after that is instant, because the microphone stays open
+      between sentences.</span>
+    </li>
+    <li>
+      <strong>Speak normally.</strong>
+      <span class="aside">Do not slow down or over-enunciate. Ordinary conversational speech
+      is what it is best at.</span>
+    </li>
+    <li>
+      <strong>Let go of the key.</strong>
+    </li>
+    <li>
+      <strong>Your words are typed in.</strong>
+      <span class="aside">Usually about a tenth of a second after you release.</span>
+    </li>
+  </ol>
+
+  <div class="note">
+    <p><strong>Leave the cursor where you want the text.</strong> ParaFlow types into
+    whichever window is in front at the moment it finishes. If you click into something else
+    while it is still working, that is where the words will land.</p>
+  </div>
+
+  <p>
+    ParaFlow has no main window. It lives in the system tray, next to the clock — click the
+    icon there for settings and everything else. If you cannot see it, click the small
+    <kbd>^</kbd> arrow to show hidden icons.
+  </p>
+
+  <p>
+    It also does not start with Windows. Launch it from the Start menu when you want it, and
+    quit it from the tray when you are done.
+  </p>
+
+  <div class="note warn">
+    <p><strong>Give it a few seconds after starting.</strong> ParaFlow loads two models onto
+    your graphics card when it launches. Until that finishes, the push-to-talk key does
+    nothing at all — no chime, no overlay change. If your very first press seems to be
+    ignored, wait a moment and press again.</p>
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="overlay">
+  <h2><span class="num">2</span>Reading the overlay</h2>
+  <p class="standfirst">
+    The small panel that appears near the edge of your screen is ParaFlow telling you what it
+    is doing. It is worth learning to read, because it is also how you know the microphone
+    state.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>It says</th><th>Which means</th></tr></thead>
+      <tbody>
+        <tr><td><strong>Ready</strong></td><td>Waiting for you. If the microphone happens to be open, it counts down to closing.</td></tr>
+        <tr><td><strong>Opening mic…</strong></td><td>Turning the microphone on. Wait for the chime before you start talking.</td></tr>
+        <tr><td><strong>Listening…</strong></td><td>Recording. Keep talking; release the key when you are done.</td></tr>
+        <tr><td><strong>Transcribing…</strong></td><td>Turning your speech into text on your graphics card.</td></tr>
+        <tr><td><strong>Cleaning up…</strong></td><td>Punctuating, removing fillers, applying your corrections.</td></tr>
+        <tr><td><strong>Your text</strong></td><td>Done. It shows what it typed, and how long the whole thing took.</td></tr>
+        <tr><td><strong>Something went wrong</strong></td><td>See <a href="#trouble">If something goes wrong</a>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>The LIVE badge</h3>
+  <p>
+    On the right of the panel is a badge reading either <span class="badge">LIVE</span> or
+    <span class="badge off">OFF</span>. This is the plain answer to "is my microphone on right
+    now?", and it is deliberately the most prominent thing on the overlay after your text.
+    Hover over it to see which microphone is in use.
+  </p>
+
+  <h3>Moving it, or hiding it</h3>
+  <p>
+    Click the ParaFlow icon in the system tray and choose <strong>Overlay position</strong> — Bottom,
+    Top or Centre. Settings adds a fourth option, <strong>Hidden</strong>.
+  </p>
+  <p>
+    You cannot drag the overlay, and that is on purpose: it is click-through, so your clicks
+    pass straight to the window behind it and it can never catch the text you are dictating.
+    A panel you could grab would be a panel that could steal a click at the wrong moment.
+  </p>
+</section>
+
+<!-- ================================================================= -->
+<section id="microphone">
+  <h2><span class="num">3</span>When the microphone is actually on</h2>
+  <p class="standfirst">
+    A dictation app that quietly listens all day is not the deal. Here is exactly what
+    ParaFlow does.
+  </p>
+
+  <ul>
+    <li><strong>It starts closed.</strong> Launching ParaFlow does not open your microphone.
+      Pressing the key does.</li>
+    <li><strong>A rising two-note chime means it is live.</strong> A falling two-note chime
+      means it has closed. These are quiet, but deliberately not silent — they are the
+      audible half of the promise.</li>
+    <li><strong>It stays open between sentences.</strong> Reopening the device on every press
+      would put a delay in front of every sentence, so after your first press it is held
+      open, ready.</li>
+    <li><strong>It closes itself after 30 seconds</strong> of no dictation, and you hear the
+      falling chime when it does. Change that timeout in Settings — anything from 5 seconds
+      to an hour.</li>
+    <li><strong>Very short taps are thrown away.</strong> Anything held for less than a
+      quarter of a second is discarded rather than transcribed, so brushing the key does not
+      produce stray text.</li>
+  </ul>
+
+  <div class="note privacy">
+    <p><strong>Nothing is recorded to disk.</strong> Your audio exists in memory for as long
+    as it takes to transcribe the sentence you just said, and is then gone. There is no
+    recordings folder, because there are no recordings.</p>
+  </div>
+
+  <p>
+    To close the microphone immediately rather than waiting out the timer, quit ParaFlow from
+    the tray menu. Restarting it is quick, and it starts closed again.
+  </p>
+</section>
+
+<!-- ================================================================= -->
+<section id="cleanup">
+  <h2><span class="num">4</span>What cleanup does</h2>
+  <p class="standfirst">
+    Speech and writing are not the same thing. If you installed ParaFlow with cleanup, a
+    second pass turns one into the other before anything is typed.
+  </p>
+
+  <div class="table-wrap">
+    <table class="wide">
+      <thead><tr><th>You say</th><th>ParaFlow types</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="said">um so I was thinking we could uh maybe move the meeting to like Thursday afternoon</td>
+          <td class="typed">So I was thinking we could move the meeting to Thursday afternoon.</td>
+        </tr>
+        <tr>
+          <td class="said">send the invoice on Tuesday, no, Wednesday, and CC the finance team</td>
+          <td class="typed">Send the invoice on Wednesday and CC the finance team.</td>
+        </tr>
+        <tr>
+          <td class="said">the uh the report the quarterly report is late</td>
+          <td class="typed">The quarterly report is late.</td>
+        </tr>
+        <tr>
+          <td class="said">we need three things new line bullet point better logging bullet point faster startup bullet point a proper test suite</td>
+          <td class="typed">We need three things:<br>- Better logging<br>- Faster startup<br>- A proper test suite</td>
+        </tr>
+        <tr>
+          <td class="said">git checkout dash b feature slash retry dash handling</td>
+          <td class="typed"><code>git checkout -b feature/retry-handling</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Correcting yourself out loud</h3>
+  <p>
+    This is the feature most worth knowing about. Say <span class="said">"Tuesday, no,
+    Wednesday"</span> and only Wednesday is typed — Tuesday does not appear at all. Words like
+    <em>no</em>, <em>sorry</em>, <em>I mean</em>, <em>actually</em> and <em>rather</em> mark a
+    correction, and the later version always wins.
+  </p>
+
+  <h3>Spoken formatting</h3>
+  <p>
+    These are treated as instructions rather than words: <strong>new line</strong>,
+    <strong>new paragraph</strong>, <strong>bullet point</strong>, <strong>period</strong>,
+    <strong>comma</strong> and <strong>question mark</strong>.
+  </p>
+
+  <h3>It will never answer you</h3>
+  <p>
+    Dictate <span class="said">"write a Python function that reverses a string"</span> and you
+    get that sentence typed out — not a function. ParaFlow is a typist, not an assistant. It
+    is built and tested that way on purpose, because dictation that occasionally decides to
+    help would be unusable.
+  </p>
+
+  <div class="note">
+    <p><strong>You never lose your words.</strong> If cleanup fails, times out, or returns
+    something that does not look like a transcript, ParaFlow types the plain unpolished
+    transcript instead. It will never swallow a sentence.</p>
+  </div>
+
+  <p>
+    Cleanup costs roughly a tenth of a second per sentence. If you would rather have the raw
+    transcript, turn it off in Settings and restart ParaFlow. If you installed the
+    dictation-only option, cleanup is not present at all and nothing in this section applies.
+  </p>
+</section>
+
+<!-- ================================================================= -->
+<section id="tone">
+  <h2><span class="num">5</span>It notices where you are typing</h2>
+  <p class="standfirst">
+    A shell command and an email should not come out looking the same. Cleanup checks which
+    application is in front and matches it.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Where you are typing</th><th>What you get</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Editors, IDEs and terminals — VS Code, Cursor, Visual Studio, the JetBrains
+            tools, Sublime Text, Notepad++, Vim, Emacs, Zed, Windows Terminal, PowerShell,
+            Command Prompt</td>
+          <td>Commands stay commands: no invented capital letter, no trailing full stop, and
+            "dash" and "slash" become <code>-</code> and <code>/</code>. Ordinary sentences
+            dictated into an editor still get normal punctuation.</td>
+        </tr>
+        <tr>
+          <td>Chat — Slack, Discord, Teams, Telegram, WhatsApp, Signal</td>
+          <td>Short and conversational.</td>
+        </tr>
+        <tr>
+          <td>Email — Outlook, Thunderbird, Mailspring, eM Client</td>
+          <td>Complete sentences, slightly more formal.</td>
+        </tr>
+        <tr>
+          <td>Everything else, <em>including web browsers</em></td>
+          <td>Ordinary writing.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    Browsers are deliberately left as ordinary writing. A browser tab could be a code review
+    or a birthday message, and guessing wrong is worse than not guessing.
+  </p>
+</section>
+
+<!-- ================================================================= -->
+<section id="dictionary">
+  <h2><span class="num">6</span>Teaching it your words</h2>
+  <p class="standfirst">
+    Colleagues' names, product names, acronyms, library names — the words a general-purpose
+    recogniser has never met. Write them down once and ParaFlow will spell them your way.
+  </p>
+
+  <ol class="steps">
+    <li><strong>Open Settings</strong> from the tray icon, and click
+      <strong>Edit personal dictionary…</strong>
+      <span class="aside">The tray menu has the same item if you prefer.</span></li>
+    <li><strong>Add one name or term per line</strong>, capitalised exactly as you want it
+      typed.
+      <span class="aside">Lines beginning with <code>#</code> are notes to yourself and are
+      ignored.</span></li>
+    <li><strong>Save the file and restart ParaFlow.</strong>
+      <span class="aside">The list is read once at startup, so an edit does not take effect
+      until then.</span></li>
+  </ol>
+
+  <p>
+    This is more capable than it sounds. ParaFlow does not just match sounds — it reads the
+    whole sentence, so "the kuber netes cluster" becomes "the Kubernetes cluster" once
+    <em>Kubernetes</em> is in your list.
+  </p>
+
+  <div class="note">
+    <p>The dictionary is only used when cleanup is switched on. With the dictation-only
+    install there is nothing to apply it.</p>
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="settings">
+  <h2><span class="num">7</span>Settings</h2>
+  <p class="standfirst">
+    Click the ParaFlow icon in the system tray and choose <strong>Settings…</strong>. Changes take
+    effect when you press <strong>Save settings</strong>.
+  </p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Setting</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Push-to-talk key</strong></td>
+          <td>The combination you hold to dictate. See <a href="#hotkey">the next section</a>.</td>
+        </tr>
+        <tr>
+          <td><strong>Overlay</strong></td>
+          <td>Where the status panel sits — bottom, top or centre of the screen — or Hidden if
+            you would rather not see it. Hiding it also hides the LIVE badge, so the chimes
+            become your only signal that the microphone is open.</td>
+        </tr>
+        <tr>
+          <td><strong>Close after … seconds</strong></td>
+          <td>How long the microphone stays open with no dictation before it releases itself.
+            30 seconds by default; 5 seconds to an hour.</td>
+        </tr>
+        <tr>
+          <td><strong>Play a chime</strong></td>
+          <td>The rising and falling tones when the microphone opens and closes. Worth
+            thinking twice before switching off — it is how you hear that it stopped
+            listening.</td>
+        </tr>
+        <tr>
+          <td><strong>Tidy up what I say</strong></td>
+          <td>The cleanup pass described <a href="#cleanup">above</a>. Turning it on or off
+            needs a restart, and ParaFlow will say so.</td>
+        </tr>
+        <tr>
+          <td><strong>Edit personal dictionary…</strong></td>
+          <td>Opens your word list in your usual text editor.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="hotkey">
+  <h2><span class="num">8</span>Changing the push-to-talk key</h2>
+
+  <ol class="steps">
+    <li><strong>Settings → Push-to-talk key → Change…</strong></li>
+    <li><strong>Hold your combination down, then release it.</strong>
+      <span class="aside">Every key is captured while it is listening, so nothing else on your
+      computer reacts.</span></li>
+    <li><strong>Press Save settings.</strong></li>
+  </ol>
+
+  <p>
+    Choose something you would never hit while typing. Combinations of modifier keys work
+    well — <kbd>Ctrl</kbd>+<kbd>Win</kbd>, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>,
+    <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Space</kbd> — because you can hold them comfortably
+    and they do not collide with ordinary writing.
+  </p>
+
+  <div class="note">
+    <p><strong>If your combination is not picked up:</strong> Windows keeps a handful of
+    Windows-key shortcuts for itself (<kbd>Win</kbd>+<kbd>E</kbd>,
+    <kbd>Win</kbd>+<kbd>R</kbd> and friends) and never passes them on. Work around it like
+    this — click <strong>Change…</strong>, click on any other window so it has focus, then
+    press your combination. ParaFlow's system-wide listener will catch it even though the
+    settings window cannot.</p>
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="trouble">
+  <h2><span class="num">9</span>If something goes wrong</h2>
+
+  <div class="table-wrap">
+    <table class="wide">
+      <thead><tr><th>What you see</th><th>What to do</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>The overlay showed my text, but nothing was typed.</strong></td>
+          <td>The application you are typing into is almost certainly running as
+            administrator. Windows does not let an ordinary program send keystrokes to an
+            elevated one. Either run that application normally, or run ParaFlow as
+            administrator too.</td>
+        </tr>
+        <tr>
+          <td><strong>Nothing happens when I press the key.</strong></td>
+          <td>If ParaFlow has only just started, give it a few seconds — the key does nothing
+            until both models have loaded. Otherwise another program has probably claimed the
+            same combination; pick a different one in Settings.</td>
+        </tr>
+        <tr>
+          <td><strong>The text went into the wrong window.</strong></td>
+          <td>ParaFlow types into whatever is in front when it finishes. Stay put until the
+            text appears.</td>
+        </tr>
+        <tr>
+          <td><strong>The beginning of my sentence is missing.</strong></td>
+          <td>Wait for the rising chime before you start speaking. ParaFlow keeps a fraction
+            of a second of audio from before you pressed, but not more than that.</td>
+        </tr>
+        <tr>
+          <td><strong>I did not hear a chime.</strong></td>
+          <td>Either chimes are switched off in Settings, or the microphone was already open —
+            it only chimes when it opens, not on every press.</td>
+        </tr>
+        <tr>
+          <td><strong>The wrong microphone is being used.</strong></td>
+          <td>ParaFlow uses whatever Windows has set as the default input device. Change it in
+            Windows Settings → System → Sound, then wait for ParaFlow's microphone to close —
+            the device is chosen fresh each time it opens.</td>
+        </tr>
+        <tr>
+          <td><strong>My new dictionary word is being ignored.</strong></td>
+          <td>Restart ParaFlow. The list is read once at startup.</td>
+        </tr>
+        <tr>
+          <td><strong>Windows warned me when I ran the installer.</strong></td>
+          <td>ParaFlow is not code-signed yet, so SmartScreen shows "Windows protected your
+            PC". Choose <strong>More info → Run anyway</strong>.</td>
+        </tr>
+        <tr>
+          <td><strong>The overlay is in my way.</strong></td>
+          <td>Tray icon → Overlay position, or set it to Hidden in Settings. Clicks already
+            pass straight through it.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ================================================================= -->
+<section id="privacy">
+  <h2><span class="num">10</span>Your privacy</h2>
+
+  <ul>
+    <li><strong>Nothing is uploaded.</strong> There is no account, no sign-in and no
+      telemetry. Both speech recognition and cleanup run on your own graphics card.</li>
+    <li><strong>Nothing is recorded.</strong> Audio is held in memory for the sentence being
+      transcribed and then discarded.</li>
+    <li><strong>The only time ParaFlow uses the internet</strong> is the one-off download
+      during first-run setup, from <code>github.com</code> and <code>huggingface.co</code>.
+      After that you can disconnect the network entirely and dictation still works — worth
+      trying once, if you want to see it for yourself.</li>
+    <li><strong>The microphone is closed unless you opened it</strong>, and it tells you both
+      when it opens and when it closes.</li>
+  </ul>
+</section>
+
+<!-- ================================================================= -->
+<section id="files">
+  <h2><span class="num">11</span>Where things are kept</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>What</th><th>Where</th></tr></thead>
+      <tbody>
+        <tr><td>The program itself</td><td><code>C:\Program Files\ParaFlow</code></td></tr>
+        <tr>
+          <td>Models, settings and your dictionary</td>
+          <td><code>%LOCALAPPDATA%\ParaFlow</code> — or just use the tray menu's
+            <strong>Open data folder</strong>. To reach it by hand, paste that path into the
+            address bar in File Explorer.</td>
+        </tr>
+        <tr><td>Your settings</td><td><code>settings.json</code>, in that folder</td></tr>
+        <tr><td>Your dictionary</td><td><code>dictionary.txt</code>, in that folder</td></tr>
+        <tr><td>This guide</td><td><code>C:\Program Files\ParaFlow\ParaFlow User Guide.html</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    The models are the large part — a few gigabytes, depending on which option you chose
+    during setup.
+  </p>
+</section>
+
+<!-- ================================================================= -->
+<section id="uninstall">
+  <h2><span class="num">12</span>Uninstalling</h2>
+  <p>
+    Windows Settings → Apps → Installed apps → ParaFlow → Uninstall. ParaFlow adds nothing to
+    your startup items and makes no system-wide changes, so removing the program is clean.
+  </p>
+
+  <div class="note warn">
+    <p><strong>Your models are not removed, even if you tick "delete application data".</strong>
+    That leaves several gigabytes in <code>%LOCALAPPDATA%\ParaFlow</code>. It is convenient if
+    you reinstall later — nothing is downloaded again — but if you are finished with ParaFlow
+    for good, delete that folder by hand afterwards to get the space back.</p>
+  </div>
+
+  <p>
+    Paste <code>%LOCALAPPDATA%</code> into the File Explorer address bar to get there, and
+    delete the <code>ParaFlow</code> folder inside it. That also removes your settings and
+    your personal dictionary, so keep a copy of <code>dictionary.txt</code> if you have put
+    work into it.
+  </p>
+</section>
+
+</main>
+
+<footer class="colophon">
+  <span>ParaFlow 0.1.0</span>
+  <span>Local-first push-to-talk dictation for Windows 11</span>
+  <span>Nothing you say leaves this computer</span>
+</footer>
+
+</div>
+</body>
+</html>

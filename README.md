@@ -106,10 +106,11 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\ParaFlow"
 
 ### Packaging
 
-`tauri.conf.json` deliberately declares **no `resources`**. Bundling `vendor/`
-and `models/` copied 2.8 GB into `target/debug` on every dev run, and weights
-barely compress — GGUF is already quantised, so LZMA gets it to 95% of
-original. Anything bundled is paid for almost at full size.
+`tauri.conf.json` bundles exactly one resource, the ~30 KB user guide.
+`vendor/` and `models/` are deliberately **not** bundled: doing so copied
+2.8 GB into `target/debug` on every dev run, and weights barely compress —
+GGUF is already quantised, so LZMA gets it to 95% of original. Anything
+bundled is paid for almost at full size.
 
 Measured compression: **weights 95%**, DLLs 70%, executables 92%. That makes
 what you bundle matter far more than how you compress it:
@@ -134,6 +135,36 @@ particular voice.
 Until that exists, `resolve()` in `lib.rs` walks up from the executable and
 finds the project-root `vendor/` and `models/` directories, so development
 works as-is and a built app must be run from the repo.
+
+### User guide
+
+`docs/user-guide.html` is the end-user documentation: how dictation works, what
+cleanup does, when the microphone is open, and what to try when nothing gets
+typed. It is a single self-contained HTML file with no external assets, so it
+works with the network off — which matters for an app whose whole pitch is that
+it works with the network off.
+
+HTML rather than Markdown for one blunt reason: on Windows a `.md` file opens
+in Notepad as raw `#` characters. An `.html` file double-clicks into a formatted
+page the reader can search and print.
+
+It is bundled as a Tauri resource and lands beside the executable as
+`ParaFlow User Guide.html`. Four ways in, because a document nothing links to
+is a document nobody reads:
+
+- **Tray → User guide**
+- **Settings → Help → Open the user guide**
+- **Start menu**, via `src-tauri/nsis/hooks.nsh`, which adds a shortcut next to
+  ParaFlow's own in `NSIS_HOOK_POSTINSTALL` and removes it again in
+  `NSIS_HOOK_POSTUNINSTALL`. The hook honours `$UpdateMode` and
+  `$NoShortcutMode` so it cannot resurrect a shortcut the user declined.
+- **Automatically, once**, when first-run setup finishes — the one moment
+  someone has the most questions and the least idea that a tray icon is where
+  the answers live.
+
+`guide_path()` prefers the resource directory and falls back to `resolve()`,
+so a developer running from the repo gets `docs/user-guide.html` without a
+build step.
 
 ## Requirements
 
@@ -544,10 +575,15 @@ src-tauri/src/
   asr.rs                   whisper-server supervisor + client
   polish.rs                llama-server supervisor, cleanup prompt, guards
   inject.rs                clipboard save/restore, SendInput, focus target
+  dictionary.rs            personal term list
+  settings.rs              persisted settings, live-read by the pipeline
+  setup.rs                 first-run downloader, install tracking
   pipeline.rs              session + utterance state machine
   lib.rs                   tray, window, wiring
+src-tauri/nsis/hooks.nsh   installer hooks (user-guide Start-menu shortcut)
 src-tauri/examples/
   cleanup.rs               cleanup quality harness (adversarial cases)
+docs/user-guide.html       end-user documentation, bundled with the installer
 scripts/setup.ps1          fetch runtimes + weights
 scripts/test-asr.ps1       ASR contract + latency, pins the HTTP shape
 vendor/                    whisper.cpp + llama.cpp binaries  (gitignored)
@@ -560,7 +596,7 @@ models/                    ggml + gguf weights               (gitignored)
 cd src-tauri; cargo test --lib
 ```
 
-20 unit tests, weighted toward the things that failed silently in development:
+43 unit tests, weighted toward the things that failed silently in development:
 side-agnostic modifier mapping (a transposed `VK_LCONTROL` once made the hotkey
 unpressable), ring-buffer marks surviving a wrap, resampling that keeps every
 sample it owes including the tail, and the cleanup guards.

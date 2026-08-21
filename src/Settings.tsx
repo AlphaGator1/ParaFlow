@@ -300,6 +300,18 @@ export default function Settings() {
         </p>
       </section>
 
+      {/* --- help ----------------------------------------------------- */}
+      <section>
+        <h2>Help</h2>
+        <button className="secondary" onClick={() => invoke("open_user_guide")}>
+          Open the user guide
+        </button>
+        <p className="hint">
+          How dictation works, what cleanup does, and what to try when something goes wrong.
+          Opens in your browser; it is installed alongside ParaFlow and works offline.
+        </p>
+      </section>
+
       {notice && <p className="notice">{notice}</p>}
 
       <footer>

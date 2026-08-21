@@ -32,6 +32,10 @@ use tauri::{
 /// Instruction model for the cleanup pass.
 const DEFAULT_CLEANUP_MODEL: &str = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf";
 
+/// The user guide, as it is named beside the installed executable. Bundled as
+/// a Tauri resource; see `bundle.resources` in `tauri.conf.json`.
+const GUIDE_FILE: &str = "ParaFlow User Guide.html";
+
 fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_string())
 }
@@ -97,6 +101,7 @@ pub fn run() {
             start_hotkey_capture,
             cancel_hotkey_capture,
             open_dictionary_file,
+            open_user_guide,
         ])
         .setup(|app| {
             // Load before anything reads it, so the hook is installed with the
@@ -272,6 +277,10 @@ fn begin_setup(app: tauri::AppHandle, profile: setup::Profile) -> Result<(), Str
                     tracing::info!(root = %root.display(), "setup complete");
                     let _ = app.emit("paraflow://setup-done", ());
                     show_hud_window(&app);
+                    // Setup runs once, and this is the moment someone has the
+                    // most questions and the least idea that a tray icon is
+                    // where the answers live. Everything after this is opt-in.
+                    open_guide(&app);
                     spawn_pipeline(app.clone());
                 }
                 Err(e) => {
@@ -397,6 +406,11 @@ fn open_dictionary_file(app: tauri::AppHandle) {
     open_dictionary(&app);
 }
 
+#[tauri::command]
+fn open_user_guide(app: tauri::AppHandle) {
+    open_guide(&app);
+}
+
 /// Move or hide the overlay to match the setting.
 fn apply_overlay(app: &tauri::AppHandle, overlay: settings::Overlay) {
     let Some(w) = app.get_webview_window("hud") else { return };
@@ -517,6 +531,7 @@ fn build_tray(app: &tauri::AppHandle) -> Result<()> {
 
     let dict = MenuItem::with_id(app, "dictionary", "Edit personal dictionary…", true, None::<&str>)?;
     let folder = MenuItem::with_id(app, "folder", "Open data folder", true, None::<&str>)?;
+    let guide = MenuItem::with_id(app, "guide", "User guide", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit ParaFlow", true, None::<&str>)?;
 
     let menu = Menu::with_items(
@@ -529,6 +544,8 @@ fn build_tray(app: &tauri::AppHandle) -> Result<()> {
             &PredefinedMenuItem::separator(app)?,
             &dict,
             &folder,
+            &PredefinedMenuItem::separator(app)?,
+            &guide,
             &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
@@ -569,6 +586,7 @@ fn build_tray(app: &tauri::AppHandle) -> Result<()> {
                         let _ = tauri_plugin_opener::open_path(root, None::<&str>);
                     }
                 }
+                "guide" => open_guide(app),
                 "quit" => app.exit(0),
                 _ => {}
             }
@@ -576,6 +594,34 @@ fn build_tray(app: &tauri::AppHandle) -> Result<()> {
         .build(app)?;
 
     Ok(())
+}
+
+/// Locate the user guide.
+///
+/// Installed builds have it beside `paraflow.exe`; a developer running from
+/// the repo has `docs/user-guide.html`, which [`resolve`] already knows how to
+/// find from either the target directory or the working directory.
+fn guide_path(app: &tauri::AppHandle) -> Option<PathBuf> {
+    if let Ok(dir) = app.path().resource_dir() {
+        let installed = dir.join(GUIDE_FILE);
+        if installed.exists() {
+            return Some(installed);
+        }
+    }
+    resolve("docs/user-guide.html").ok()
+}
+
+/// Show the user guide in the default browser.
+fn open_guide(app: &tauri::AppHandle) {
+    let Some(path) = guide_path(app) else {
+        tracing::warn!("user guide not found beside the executable or in the repo");
+        let _ = app.emit("paraflow://notice", "Could not find the user guide.");
+        return;
+    };
+    if let Err(e) = tauri_plugin_opener::open_path(&path, None::<&str>) {
+        tracing::warn!(error = %e, path = %path.display(), "could not open user guide");
+        let _ = app.emit("paraflow://notice", "Could not open the user guide.");
+    }
 }
 
 /// Open the personal dictionary for editing, creating it if absent.

@@ -44,9 +44,13 @@
       "icons/128x128@2x.png",
       "icons/icon.ico"
     ],
+    "resources": {
+      "../docs/user-guide.html": "ParaFlow User Guide.html"
+    },
     "windows": {
       "nsis": {
-        "installMode": "perMachine"
+        "installMode": "perMachine",
+        "installerHooks": "./nsis/hooks.nsh"
       }
     }
   }
