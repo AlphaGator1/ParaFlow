@@ -66,7 +66,12 @@ impl Backend {
     /// build is preferred; the second entry is a CPU fallback.
     fn server_candidates(&self) -> &'static [&'static str] {
         match self {
-            Backend::Parakeet => &["vendor/parakeet-cuda/parakeet-server.exe"],
+            // CUDA first: on an NVIDIA machine it is measurably faster, and on
+            // any other machine it simply will not be present.
+            Backend::Parakeet => &[
+                "vendor/parakeet-cuda/parakeet-server.exe",
+                "vendor/parakeet-vulkan/parakeet-server.exe",
+            ],
             Backend::Whisper => &[
                 "vendor/whisper-cuda/Release/whisper-server.exe",
                 "vendor/whisper-cpu/Release/whisper-server.exe",

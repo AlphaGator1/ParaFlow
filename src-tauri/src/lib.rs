@@ -3,6 +3,7 @@
 mod asr;
 mod audio;
 mod hotkey;
+mod setup;
 mod inject;
 mod pipeline;
 mod sidecar;
@@ -25,7 +26,7 @@ use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
+    Emitter, Manager,
 };
 
 /// Instruction model for the cleanup pass.
@@ -37,15 +38,28 @@ fn env_or(key: &str, fallback: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| fallback.to_string())
 }
 
-/// Locate a bundled resource. In development the vendor/ and models/ trees sit
-/// beside src-tauri/; in a packaged build they are copied next to the exe.
+/// Locate a runtime binary or model file.
+///
+/// Installed assets win over the repo. An end user has everything under
+/// `%LOCALAPPDATA%\ParaFlow`, fetched on first run; a developer has `vendor/`
+/// and `models/` checked out beside `src-tauri/`. Looking at the install root
+/// first means a developer who has also run the installer still gets their
+/// working tree, because `vendor/` only exists in the latter case.
+///
+/// Paths are written repo-style (`vendor/parakeet-cuda/...`); the `vendor/`
+/// prefix maps to `runtimes/` under the install root.
 fn resolve(relative: &str) -> Result<PathBuf> {
-    let mut roots: Vec<PathBuf> = Vec::new();
+    let mut candidates: Vec<PathBuf> = Vec::new();
 
+    if let Some(root) = setup::install_root() {
+        candidates.push(root.join(relative.replacen("vendor/", "runtimes/", 1)));
+    }
+
+    let mut roots: Vec<PathBuf> = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             roots.push(dir.to_path_buf());
-            // target/debug/ -> project root
+            // target/release/ -> project root
             roots.push(dir.join("../../.."));
         }
     }
@@ -53,16 +67,16 @@ fn resolve(relative: &str) -> Result<PathBuf> {
         roots.push(cwd.clone());
         roots.push(cwd.join(".."));
     }
+    candidates.extend(roots.iter().map(|r| r.join(relative)));
 
-    for root in &roots {
-        let candidate = root.join(relative);
+    for candidate in &candidates {
         if candidate.exists() {
-            return Ok(candidate.canonicalize().unwrap_or(candidate));
+            return Ok(candidate.canonicalize().unwrap_or_else(|_| candidate.clone()));
         }
     }
     Err(anyhow!(
         "could not find `{relative}` in any of: {}",
-        roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ")
+        candidates.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ")
     ))
 }
 
@@ -77,25 +91,121 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![setup_status, begin_setup])
         .setup(|app| {
             build_tray(app.handle())?;
-
             let handle = app.handle().clone();
-            // The whole audio path lives on this one thread: cpal's Stream is
-            // !Send on Windows, so the capture device must be opened on the
-            // same thread that ultimately owns it.
-            std::thread::Builder::new()
-                .name("paraflow-pipeline".into())
-                .spawn(move || {
-                    if let Err(e) = start_pipeline(handle) {
-                        tracing::error!(error = %e, "pipeline failed to start");
-                    }
-                })?;
 
+            // Before deciding whether we are set up, throw away anything a
+            // half-finished install left behind. Otherwise those files look
+            // like a working runtime and the sidecar dies at first use.
+            setup::purge_incomplete();
+
+            if setup::ready(|p| resolve(p).is_ok()) {
+                spawn_pipeline(handle);
+            } else {
+                // Nothing to dictate with yet. Grow the HUD into a real window
+                // and let the setup screen drive; the pipeline starts once
+                // `begin_setup` finishes.
+                tracing::info!("no recogniser found; showing first-run setup");
+                show_setup_window(&handle);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running ParaFlow");
+}
+
+/// Grow the always-on-top HUD into a focusable setup window.
+fn show_setup_window(app: &tauri::AppHandle) {
+    let Some(w) = app.get_webview_window("hud") else { return };
+    let _ = w.set_size(tauri::LogicalSize::new(620.0_f64, 520.0_f64));
+    let _ = w.set_always_on_top(false);
+    let _ = w.center();
+    let _ = w.show();
+    let _ = w.set_focus();
+}
+
+/// Shrink back to the passive overlay once setup is done.
+fn show_hud_window(app: &tauri::AppHandle) {
+    let Some(w) = app.get_webview_window("hud") else { return };
+    let _ = w.set_size(tauri::LogicalSize::new(420.0_f64, 132.0_f64));
+    let _ = w.set_always_on_top(true);
+    let _ = w.center();
+}
+
+/// True once the pipeline thread has been started, so setup completing twice
+/// cannot bring up two sets of sidecars.
+static PIPELINE_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn spawn_pipeline(handle: tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if PIPELINE_STARTED.swap(true, Ordering::SeqCst) {
+        tracing::warn!("pipeline already running; ignoring duplicate start");
+        return;
+    }
+    // The whole audio path lives on this one thread: cpal's Stream is !Send on
+    // Windows, so the capture device must be opened on the same thread that
+    // ultimately owns it.
+    let _ = std::thread::Builder::new().name("paraflow-pipeline".into()).spawn(move || {
+        if let Err(e) = start_pipeline(handle.clone()) {
+            tracing::error!(error = %e, "pipeline failed to start");
+            let _ = handle.emit("paraflow://fatal", e.to_string());
+        }
+    });
+}
+
+/// What the setup screen needs to render its choices.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SetupStatus {
+    /// True when nothing is installed and the setup screen should be shown.
+    needs_setup: bool,
+    /// Which GPU backend was detected for this machine.
+    accel: setup::Accel,
+    /// Download size in MB for each choice, on the detected backend.
+    transcribe_mb: u64,
+    polish_mb: u64,
+}
+
+#[tauri::command]
+fn setup_status() -> SetupStatus {
+    let accel = setup::Accel::detect();
+    SetupStatus {
+        needs_setup: !setup::ready(|p| resolve(p).is_ok()),
+        accel,
+        transcribe_mb: setup::download_mb(setup::Profile::Transcribe, accel),
+        polish_mb: setup::download_mb(setup::Profile::Polish, accel),
+    }
+}
+
+/// Download and install the chosen profile, then start dictating.
+#[tauri::command]
+fn begin_setup(app: tauri::AppHandle, profile: setup::Profile) -> Result<(), String> {
+    let accel = setup::Accel::detect();
+    std::thread::Builder::new()
+        .name("paraflow-setup".into())
+        .spawn(move || {
+            let emitter = app.clone();
+            let result = setup::install(profile, accel, move |p| {
+                let _ = emitter.emit("paraflow://setup-progress", p);
+            });
+            match result {
+                Ok(root) => {
+                    tracing::info!(root = %root.display(), "setup complete");
+                    let _ = app.emit("paraflow://setup-done", ());
+                    show_hud_window(&app);
+                    spawn_pipeline(app.clone());
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "setup failed");
+                    let _ = app.emit("paraflow://setup-failed", e.to_string());
+                }
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn start_pipeline(app: tauri::AppHandle) -> Result<()> {
@@ -146,7 +256,11 @@ fn start_polish() -> Option<Polish> {
         return None;
     }
 
-    let server_bin = match resolve("vendor/llama-cuda/llama-server.exe") {
+    // CUDA first for the same reason as the recogniser, but it matters far
+    // more here: Vulkan runs the 4B cleanup model ~9x slower.
+    let server_bin = match resolve("vendor/llama-cuda/llama-server.exe")
+        .or_else(|_| resolve("vendor/llama-vulkan/llama-server.exe"))
+    {
         Ok(p) => p,
         Err(e) => {
             tracing::warn!(error = %e, "no llama-server; dictation will paste raw transcripts");

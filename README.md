@@ -49,6 +49,36 @@ Vulkan's *first ever* run on a machine costs ~4.6 s compiling shaders. The
 driver caches them, so later launches are 85–93 ms cold and 55 ms warm — faster
 cold than CUDA's 151 ms. `Asr::warm_up` absorbs it either way.
 
+### First-run setup
+
+Nothing large ships in the installer. On first launch ParaFlow shows a setup
+screen, detects the GPU, and downloads what the chosen configuration needs into
+`%LOCALAPPDATA%\ParaFlow\`.
+
+The user is asked **one** question — transcription only, or transcription plus
+cleanup:
+
+| choice | download (NVIDIA) | what it does |
+|---|---|---|
+| **Dictation with cleanup** *(default)* | ~4.6 GB | removes fillers, applies spoken corrections, formats lists, matches the target app |
+| Dictation only | ~1.7 GB | types what you said, with punctuation and casing |
+
+Everything else is decided rather than asked. The GPU backend comes from
+looking for `nvcuda.dll` — installed by the NVIDIA *driver*, so its presence
+means CUDA will actually run — because the alternative is asking a
+non-technical user to identify their own graphics card. On anything else the
+plan switches to Vulkan, and the screen says plainly that cleanup will be
+slower.
+
+The downloader resumes: it writes to a `.part` file, sends a `Range` header if
+one is there, and falls back to starting over if the server ignores it and
+replies 200 with the whole file. It verifies against `Content-Length` and fails
+loudly rather than leaving a truncated model on disk. Assets already present
+are skipped, so re-running setup is cheap.
+
+`PARAFLOW_FORCE_SETUP=1` shows the screen on a machine that is already set up,
+which is the only way to look at it after the first run. It deletes nothing.
+
 ### Packaging
 
 `tauri.conf.json` deliberately declares **no `resources`**. Bundling `vendor/`

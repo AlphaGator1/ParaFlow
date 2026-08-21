@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import Setup, { type SetupStatus } from "./Setup";
 import "./styles.css";
 
 type Stage =
@@ -19,7 +21,22 @@ export default function App() {
   const [stage, setStage] = useState<Stage>({ kind: "idle" });
   const [mic, setMic] = useState<Mic>({ open: false, device: "", closesInS: 0 });
   const [bars, setBars] = useState<number[]>(() => new Array(BAR_COUNT).fill(0));
+  // undefined while we ask the backend; null once setup is not needed.
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null | undefined>(undefined);
   const resetTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    invoke<SetupStatus>("setup_status")
+      .then((s) => setSetupStatus(s.needsSetup ? s : null))
+      // If the backend cannot be reached the HUD is the safer thing to show:
+      // the pipeline may well be running fine.
+      .catch(() => setSetupStatus(null));
+
+    const unDone = listen("paraflow://setup-done", () => setSetupStatus(null));
+    return () => {
+      unDone.then((f) => f());
+    };
+  }, []);
 
   useEffect(() => {
     const unStage = listen<Stage>("flow://stage", (e) => {
@@ -52,6 +69,11 @@ export default function App() {
       window.clearTimeout(resetTimer.current);
     };
   }, []);
+
+  // Render nothing until we know which face to show, so the HUD does not
+  // flash up in front of the setup screen on first run.
+  if (setupStatus === undefined) return null;
+  if (setupStatus) return <Setup status={setupStatus} />;
 
   return (
     <div className="hud" data-stage={stage.kind}>
