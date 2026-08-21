@@ -336,6 +336,10 @@ fn save_settings(app: tauri::AppHandle, next: settings::Settings) -> Result<(), 
     if next.hotkey != previous.hotkey {
         hotkey::set_chord(next.chord());
     }
+    // The overlay prints the chord in its idle hint, so it has to be told -
+    // otherwise it keeps advertising the old keys while the new ones work,
+    // which reads as "the change did not take".
+    let _ = app.emit("paraflow://settings-changed", next.clone());
     // Overlay position and visibility are ours to apply immediately.
     apply_overlay(&app, next.overlay);
 
@@ -367,7 +371,10 @@ fn start_hotkey_capture(app: tauri::AppHandle) {
                 match event {
                     hotkey::CaptureEvent::Preview(keys) => {
                         let names: Vec<String> = keys.iter().map(|k| hotkey::vk_name(*k)).collect();
-                        let _ = app.emit("paraflow://capture-preview", names);
+                        match app.emit("paraflow://capture-preview", names.clone()) {
+                            Ok(()) => tracing::debug!(?names, "emitted capture preview"),
+                            Err(e) => tracing::warn!(error = %e, "capture preview emit failed"),
+                        }
                     }
                     hotkey::CaptureEvent::Done(keys) => {
                         let names: Vec<String> = keys.iter().map(|k| hotkey::vk_name(*k)).collect();

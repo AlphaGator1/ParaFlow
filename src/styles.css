@@ -482,7 +482,11 @@ button.primary:hover {
 /* Settings window ========================================================= */
 
 .settings {
-  min-height: 100%;
+  /* `#root` is `overflow: hidden` for the HUD's sake, so this must scroll on
+     its own. Without it a window too small for the form silently clips the
+     Save button with no scrollbar to reveal it. */
+  height: 100%;
+  overflow-y: auto;
   padding: 26px 30px 30px;
   background: linear-gradient(160deg, #14122e 0%, #1b1640 55%, #241a4d 100%);
   pointer-events: auto;
@@ -651,4 +655,15 @@ button.secondary:hover {
   color: #fde68a;
   background: rgba(251, 191, 36, 0.12);
   border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+/* Keep Save reachable without scrolling to find it. A form whose primary
+   action is below the fold reads as having no primary action. */
+.settings footer {
+  position: sticky;
+  bottom: 0;
+  margin-top: 24px;
+  padding: 16px 0 4px;
+  background: linear-gradient(180deg, rgba(30, 24, 70, 0) 0%, #241a4d 28%);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }

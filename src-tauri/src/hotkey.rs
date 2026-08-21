@@ -310,6 +310,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         }
         let current = ordered(&st.held);
         let empty = st.held.is_empty();
+        tracing::debug!(vk, is_down, is_up, ?current, empty, "capture saw a key");
 
         if let Some(cap) = st.capture.as_mut() {
             if current.len() > cap.best.len() {

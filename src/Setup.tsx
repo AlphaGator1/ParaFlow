@@ -1,58 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
-import { LogicalSize } from "@tauri-apps/api/dpi";
+import { useFitWindowToContent } from "./useFitWindow";
 
 const WIDTH = 620;
-/// Never shrink below this, however little content there is.
 const MIN_HEIGHT = 420;
-/// Leave room for the taskbar and a little breathing space.
-const SCREEN_FRACTION = 0.9;
-
-/**
- * Grow the window to fit its content, up to what the monitor can show.
- *
- * The alternative — a fixed height — either scrolls on a normal display or
- * overflows a small one, since the two option cards are long by design. This
- * measures what the content actually needs and asks for exactly that, falling
- * back to scrolling only when the screen genuinely cannot fit it.
- */
-function useFitWindowToContent(ref: React.RefObject<HTMLDivElement>, deps: unknown[]) {
-  useLayoutEffect(() => {
-    let cancelled = false;
-    // Two frames: one for React to commit, one for the browser to lay out and
-    // settle webfont metrics. Measuring earlier reports a too-short page.
-    const raf = requestAnimationFrame(() =>
-      requestAnimationFrame(async () => {
-        const el = ref.current;
-        if (!el || cancelled) return;
-        try {
-          const monitor = await currentMonitor();
-          const scale = monitor?.scaleFactor ?? 1;
-          const maxHeight = monitor
-            ? (monitor.size.height / scale) * SCREEN_FRACTION
-            : Number.MAX_SAFE_INTEGER;
-
-          const needed = el.scrollHeight;
-          const height = Math.round(Math.min(Math.max(needed, MIN_HEIGHT), maxHeight));
-
-          const win = getCurrentWindow();
-          await win.setSize(new LogicalSize(WIDTH, height));
-          await win.center();
-        } catch {
-          // Window sizing is a nicety; the page scrolls perfectly well without
-          // it, so a failure here must not break setup.
-        }
-      }),
-    );
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(raf);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-}
 
 type Accel = "cuda" | "vulkan";
 type Profile = "transcribe" | "polish";
@@ -90,7 +42,7 @@ export default function Setup({ status }: { status: SetupStatus }) {
   const pageRef = useRef<HTMLDivElement>(null);
 
   // Re-fit when the error banner appears or the choice changes the button text.
-  useFitWindowToContent(pageRef, [started, error]);
+  useFitWindowToContent(pageRef, WIDTH, MIN_HEIGHT, [started, error]);
 
   useEffect(() => {
     const unProg = listen<Progress>("paraflow://setup-progress", (e) => setProgress(e.payload));

@@ -23,6 +23,8 @@ export default function App() {
   const [bars, setBars] = useState<number[]>(() => new Array(BAR_COUNT).fill(0));
   // undefined while we ask the backend; null once setup is not needed.
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null | undefined>(undefined);
+  // The live push-to-talk chord, so the idle hint never advertises stale keys.
+  const [hotkey, setHotkey] = useState<string[]>(["Ctrl", "Win"]);
   const resetTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -32,9 +34,17 @@ export default function App() {
       // the pipeline may well be running fine.
       .catch(() => setSetupStatus(null));
 
+    invoke<{ hotkey: string[] }>("get_settings")
+      .then((s) => setHotkey(s.hotkey))
+      .catch(() => {});
+
     const unDone = listen("paraflow://setup-done", () => setSetupStatus(null));
+    const unSettings = listen<{ hotkey: string[] }>("paraflow://settings-changed", (e) =>
+      setHotkey(e.payload.hotkey),
+    );
     return () => {
       unDone.then((f) => f());
+      unSettings.then((f) => f());
     };
   }, []);
 
@@ -82,7 +92,7 @@ export default function App() {
           <Visual stage={stage} bars={bars} />
         </div>
         <div className="body">
-          <Label stage={stage} mic={mic} />
+          <Label stage={stage} mic={mic} hotkey={hotkey} />
         </div>
         <MicBadge mic={mic} />
       </div>
@@ -128,7 +138,7 @@ function Visual({ stage, bars }: { stage: Stage; bars: number[] }) {
   }
 }
 
-function Label({ stage, mic }: { stage: Stage; mic: Mic }) {
+function Label({ stage, mic, hotkey }: { stage: Stage; mic: Mic; hotkey: string[] }) {
   switch (stage.kind) {
     case "idle":
       return (
@@ -139,7 +149,14 @@ function Label({ stage, mic }: { stage: Stage; mic: Mic }) {
               <>Mic closes in {mic.closesInS}s</>
             ) : (
               <>
-                Hold <kbd>Ctrl</kbd> + <kbd>Win</kbd> to dictate
+                Hold{" "}
+                {hotkey.map((k, i) => (
+                  <span key={k}>
+                    {i > 0 && " + "}
+                    <kbd>{k}</kbd>
+                  </span>
+                ))}{" "}
+                to dictate
               </>
             )}
           </div>
