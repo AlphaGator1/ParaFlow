@@ -67,14 +67,18 @@ All optional, read at startup:
 
 | variable | default | meaning |
 |---|---|---|
-| `FLOWSTATE_MODEL` | `ggml-large-v3-turbo.bin` | transcription model in `models/` |
+| `FLOWSTATE_ASR` | `parakeet` | `parakeet` or `whisper` |
+| `FLOWSTATE_MODEL` | per backend | transcription model in `models/`, overrides the backend default |
 | `FLOWSTATE_CLEANUP_MODEL` | `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | cleanup model |
 | `FLOWSTATE_NO_CLEANUP` | unset | set to anything to paste raw transcripts |
 | `FLOWSTATE_IDLE_SECS` | `30` | idle time before the mic is released |
 | `FLOWSTATE_LOG` | `flowstate_lib=debug,info` | tracing filter |
 
 ```powershell
-$env:FLOWSTATE_IDLE_SECS = "60"; npm run tauri dev
+$env:FLOWSTATE_IDLE_SECS = "60"; npm run tauri dev -- --release
+
+# A/B the two transcription backends on your own speech:
+$env:FLOWSTATE_ASR = "whisper"; npm run tauri dev -- --release
 ```
 
 ---
@@ -251,25 +255,43 @@ npm run tauri dev -- --release
 This was worth checking before optimizing: the resampler looked like the most
 expensive stage in the pipeline and is in fact ~1% of it.
 
-### Choosing the transcription model
+### Choosing the transcription backend
 
-`scripts/test-asr.ps1` against an 11.0 s sample, warm:
+Two backends, selected by `FLOWSTATE_ASR`. Both are resident HTTP sidecars
+taking a WAV over multipart, so the client code in `asr.rs` is shared and only
+the flags and endpoint differ.
 
-| model | size | warm latency | notes |
-|---|---|---|---|
-| **large-v3-turbo** *(default)* | 1549 MB | **99 ms** | correct punctuation |
-| small.en | 465 MB | 110 ms | *slower*, no accuracy gain |
-| base.en | 141 MB | 53 ms | drops commas; cleanup restores them |
+Same 11.0 s sample, same harness, warm:
 
-The counterintuitive result is that **an English-only model does not reduce
-latency** — `small.en` is slower than the multilingual default. large-v3-turbo
-is distilled down to 4 decoder layers where `small` has 12, and decoding
-dominates at utterance lengths. English-only operation comes from pinning
-`-l en`, which skips language detection, not from the model choice.
+| backend | size | warm | load | notes |
+|---|---|---|---|---|
+| **Parakeet TDT 0.6B v3 q8_0** *(default)* | **897 MB** | **45 ms** | 526 ms | punctuation + casing native |
+| Parakeet v3 f16 | 1374 MB | 45 ms | 526 ms | identical output to q8_0 |
+| whisper large-v3-turbo | 1549 MB | 99 ms | 1195 ms | supports decoder prompt biasing |
+| whisper small.en | 465 MB | 110 ms | — | *slower*, no accuracy gain |
+| whisper base.en | 141 MB | 53 ms | — | drops commas; cleanup restores them |
 
-`base.en` is a genuine option for a small install: it is 11× smaller and 46 ms
-faster, and the punctuation it drops is exactly what the cleanup pass adds back.
-It does make more word errors on difficult audio, which cleanup cannot fix.
+Parakeet is **2.2× faster and 42% smaller** than the whisper default, and
+produced a byte-identical transcript on this sample, punctuation included.
+Quantizing to q8_0 cost nothing measurable against f16 on either axis, so the
+smaller file is the default.
+
+Two things worth knowing before trusting that table:
+
+- **It is one easy sample.** The JFK clip is famous enough to plausibly sit in
+  training data. The latency numbers are measured and solid; the accuracy
+  comparison is a smoke test, not an evaluation. This is why whisper stays
+  selectable rather than being deleted.
+- **Parakeet has no prompt biasing.** Its only knobs are `--decoder`, `--lang`,
+  and `--stream`. whisper-server's `--prompt` can bias decoding toward supplied
+  vocabulary; Parakeet has no equivalent, which changes how a personal
+  dictionary has to be built (see `NEXT.md`).
+
+Among the whisper models, the counterintuitive result is that **an English-only
+model does not reduce latency** — `small.en` is slower than the multilingual
+`large-v3-turbo`, which is distilled to 4 decoder layers where `small` has 12.
+English-only operation comes from pinning `-l en` to skip language detection,
+not from the model choice.
 
 ### Cleanup pass
 

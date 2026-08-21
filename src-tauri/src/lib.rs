@@ -14,7 +14,7 @@ mod sound;
 pub mod polish;
 
 use anyhow::{anyhow, Result};
-use asr::{Asr, AsrConfig};
+use asr::{Asr, Backend};
 use audio::MicSession;
 use hotkey::{Chord, PttEvent};
 use pipeline::Pipeline;
@@ -27,9 +27,6 @@ use tauri::{
     Manager,
 };
 
-/// Transcription model. `small.en` is English-only and a third the size of the
-/// multilingual default; see README for the accuracy comparison.
-const DEFAULT_MODEL: &str = "ggml-large-v3-turbo.bin";
 /// Instruction model for the cleanup pass.
 const DEFAULT_CLEANUP_MODEL: &str = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf";
 /// How long a dictation session stays live before the microphone is released.
@@ -68,14 +65,6 @@ fn resolve(relative: &str) -> Result<PathBuf> {
     ))
 }
 
-/// Prefer the CUDA build, fall back to the CPU build if it is missing.
-fn resolve_whisper_server() -> Result<(PathBuf, bool)> {
-    if let Ok(p) = resolve("vendor/whisper-cuda/Release/whisper-server.exe") {
-        return Ok((p, true));
-    }
-    Ok((resolve("vendor/whisper-cpu/Release/whisper-server.exe")?, false))
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
@@ -109,22 +98,19 @@ pub fn run() {
 }
 
 fn start_pipeline(app: tauri::AppHandle) -> Result<()> {
-    let (server_bin, gpu) = resolve_whisper_server()?;
-    let model = resolve(&format!("models/{}", env_or("FLOWSTATE_MODEL", DEFAULT_MODEL)))?;
+    let backend = Backend::from_env();
+    // Only whisper's CPU paths use these; leave the rest of the machine free
+    // for whatever the user is actually working in.
+    let config = Asr::locate(backend, std::env::var("FLOWSTATE_MODEL").ok(), resolve, 8)?;
 
-    tracing::info!(server = %server_bin.display(), gpu, "resolved ASR backend");
+    tracing::info!(
+        ?backend,
+        server = %config.server_bin.display(),
+        gpu = config.gpu,
+        "resolved ASR backend"
+    );
 
-    let asr = Asr::start(AsrConfig {
-        server_bin,
-        model,
-        // English (United States) only. Pinning the language skips detection
-        // and stops the decoder from ever wandering into another one.
-        language: "en".into(),
-        gpu,
-        // whisper.cpp only uses these for the CPU paths; leave the rest of the
-        // 9950X3D free for whatever the user is actually working in.
-        threads: 8,
-    })?;
+    let asr = Asr::start(config)?;
 
     let polish = start_polish();
 

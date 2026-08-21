@@ -113,6 +113,8 @@ impl Pipeline {
         self.emit(Stage::Idle);
         self.emit_mic(Duration::ZERO);
         tracing::info!(
+            asr = ?self.asr.backend(),
+            cleanup = self.polish.is_some(),
             idle_timeout_s = self.idle_timeout.as_secs(),
             "pipeline ready; microphone stays closed until first use"
         );
