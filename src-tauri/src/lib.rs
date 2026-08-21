@@ -164,9 +164,13 @@ struct SetupStatus {
     needs_setup: bool,
     /// Which GPU backend was detected for this machine.
     accel: setup::Accel,
-    /// Download size in MB for each choice, on the detected backend.
+    /// Full download size in MB for each choice, on the detected backend.
     transcribe_mb: u64,
     polish_mb: u64,
+    /// What is actually left to fetch, once anything already on disk is
+    /// discounted. Lower than the total when resuming or changing profile.
+    transcribe_remaining_mb: u64,
+    polish_remaining_mb: u64,
 }
 
 #[tauri::command]
@@ -177,6 +181,8 @@ fn setup_status() -> SetupStatus {
         accel,
         transcribe_mb: setup::download_mb(setup::Profile::Transcribe, accel),
         polish_mb: setup::download_mb(setup::Profile::Polish, accel),
+        transcribe_remaining_mb: setup::remaining_mb(setup::Profile::Transcribe, accel),
+        polish_remaining_mb: setup::remaining_mb(setup::Profile::Polish, accel),
     }
 }
 

@@ -171,9 +171,20 @@ pub fn plan(profile: Profile, accel: Accel) -> Vec<Asset> {
     assets
 }
 
-/// Total download for a profile, in MB. Used by the setup screen.
+/// Total download for a profile, in MB, ignoring anything already on disk.
 pub fn download_mb(profile: Profile, accel: Accel) -> u64 {
     plan(profile, accel).iter().map(|a| a.approx_mb).sum()
+}
+
+/// What still needs fetching, in MB.
+///
+/// `install` skips assets already present, so this - not the plan total - is
+/// what the user will actually wait for. Showing the total instead overstates
+/// the cost for anyone reinstalling, switching profile, or resuming after an
+/// interruption, which is precisely when reassurance matters most.
+pub fn remaining_mb(profile: Profile, accel: Accel) -> u64 {
+    let Some(root) = install_root() else { return download_mb(profile, accel) };
+    plan(profile, accel).iter().filter(|a| !landed(&root, a)).map(|a| a.approx_mb).sum()
 }
 
 /// `%LOCALAPPDATA%\ParaFlow`.
@@ -292,6 +303,12 @@ pub struct Progress {
     pub bytes: u64,
     pub of_bytes: u64,
     pub done: bool,
+    /// This asset was already on disk and nothing was transferred.
+    ///
+    /// Without this the UI cannot tell the two apart, and a skipped multi-GB
+    /// model flashes past under its own name looking exactly like a download -
+    /// which reads as "it re-downloaded everything" to anyone watching.
+    pub skipped: bool,
 }
 
 /// Fetch and install everything in `plan`, reporting progress as it goes.
@@ -329,6 +346,7 @@ pub fn install(
                 bytes: 0,
                 of_bytes: 0,
                 done: true,
+                skipped: true,
             });
             continue;
         }
@@ -341,6 +359,7 @@ pub fn install(
                 bytes,
                 of_bytes,
                 done: false,
+                skipped: false,
             })
         })?;
 
@@ -370,6 +389,7 @@ pub fn install(
             bytes: 0,
             of_bytes: 0,
             done: true,
+            skipped: false,
         });
     }
 

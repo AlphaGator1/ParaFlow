@@ -471,3 +471,10 @@ button.primary:hover {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
+
+/* A skipped step is complete-but-free; show it filled and muted so it reads
+   as "you already have this" rather than an instant download. */
+.progress-fill.skipped {
+  background: rgba(164, 159, 196, 0.45);
+  transition: none;
+}

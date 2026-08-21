@@ -62,6 +62,9 @@ export type SetupStatus = {
   accel: Accel;
   transcribeMb: number;
   polishMb: number;
+  /** What is left to fetch once files already on disk are discounted. */
+  transcribeRemainingMb: number;
+  polishRemainingMb: number;
 };
 
 type Progress = {
@@ -71,6 +74,8 @@ type Progress = {
   bytes: number;
   ofBytes: number;
   done: boolean;
+  /** Already on disk; nothing was transferred for this step. */
+  skipped: boolean;
 };
 
 function gb(mb: number) {
@@ -98,6 +103,11 @@ export default function Setup({ status }: { status: SetupStatus }) {
       unFail.then((f) => f());
     };
   }, []);
+
+  const full = choice === "polish" ? status.polishMb : status.transcribeMb;
+  const remaining =
+    choice === "polish" ? status.polishRemainingMb : status.transcribeRemainingMb;
+  const alreadyHave = Math.max(0, full - remaining);
 
   async function begin() {
     setError(null);
@@ -165,9 +175,14 @@ export default function Setup({ status }: { status: SetupStatus }) {
 
       <footer>
         <button className="primary" onClick={begin}>
-          Install — {gb(choice === "polish" ? status.polishMb : status.transcribeMb)}
+          Install — {gb(remaining)}
         </button>
         <p className="footnote">
+          {alreadyHave > 0 ? (
+            <>
+              {gb(alreadyHave)} is already on this computer and will be reused.{" "}
+            </>
+          ) : null}
           Downloads to your user folder. You can close and reopen ParaFlow mid-download; it
           picks up where it left off.
         </p>
@@ -255,12 +270,17 @@ function Downloading({
             Step {progress.index + 1} of {progress.total} — {progress.label}
           </div>
           <div className="progress-track">
-            <div className="progress-fill" style={{ width: `${pct}%` }} />
+            <div
+              className={`progress-fill ${progress.skipped ? "skipped" : ""}`}
+              style={{ width: progress.skipped ? "100%" : `${pct}%` }}
+            />
           </div>
           <div className="bytes">
-            {progress.ofBytes > 0
-              ? `${(progress.bytes / 1048576).toFixed(0)} of ${(progress.ofBytes / 1048576).toFixed(0)} MB`
-              : "Unpacking…"}
+            {progress.skipped
+              ? "Already on this computer — skipping"
+              : progress.ofBytes > 0
+                ? `${(progress.bytes / 1048576).toFixed(0)} of ${(progress.ofBytes / 1048576).toFixed(0)} MB`
+                : "Unpacking…"}
           </div>
         </>
       ) : (
