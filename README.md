@@ -1,5 +1,7 @@
 # ParaFlow
 
+Inspired by Pat Simmons: https://www.youtube.com/watch?v=IMQw3aHjf2Q
+
 Push-to-talk dictation for Windows. Hold a key, speak, release — cleaned-up text
 lands at your cursor in whatever app has focus. Everything runs on your own GPU;
 no audio leaves the machine.
