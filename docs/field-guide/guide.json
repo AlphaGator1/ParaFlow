@@ -1708,7 +1708,7 @@
   "about": "ParaFlow is a local-first push-to-talk dictation app for Windows: hold a key, speak, release, and cleaned-up text is pasted at the cursor. Speech recognition (Parakeet) and cleanup (a Qwen3 language model) run on the user's own GPU, so no audio leaves the machine.",
   "overview": "A Tauri app shell starts at launch, loads settings, and either shows first-run setup (which downloads the models) or starts dictating. Dictating means launching the local speech server, plus the cleanup server when cleanup is on, as GPU sidecar processes, installing a low-level keyboard hook, and handing everything to a single pipeline thread. The pipeline owns each burst of dictation: it opens the microphone on demand, turns each held key press into a 16 kHz recording, sends it to the speech server, asks the cleanup model to tidy the transcript in the style of the app in front, and pastes the result through the clipboard. A small always-on-top React overlay shows each stage from events the pipeline emits, and a settings window edits a JSON file the rest of the app reads live (turning cleanup on or off needs a restart). An NSIS installer, build tooling and the README and user guide wrap it for shipping.",
   "verified": {
-    "commit": "c90e5fe1dae71841d43ef7146f29c173df043024",
+    "commit": "043aaeba22f0af89cab8d9760cb6bc12240fb661",
     "date": "2026-10-16"
   }
 }
