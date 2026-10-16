@@ -370,8 +370,12 @@ pub fn install(
                     .with_context(|| format!("could not move {} into place", asset.label))?;
             }
             Dest::RuntimeZip(dir) => {
-                unzip_flat(&staged, &root.join("runtimes").join(dir))
-                    .with_context(|| format!("could not unpack {}", asset.label))?;
+                if let Err(e) = unzip_flat(&staged, &root.join("runtimes").join(dir)) {
+                    // A whole `.part` is now reused on retry, so one that will
+                    // not unpack has to go, or every retry fails the same way.
+                    let _ = std::fs::remove_file(&staged);
+                    return Err(e.context(format!("could not unpack {}", asset.label)));
+                }
                 let _ = std::fs::remove_file(&staged);
                 // Only now, after a clean extraction, is this archive done.
                 let stamp = marker(&root, asset);
@@ -413,6 +417,26 @@ fn fetch(
     }
 
     let mut resp = req.send().with_context(|| format!("could not reach {}", asset.url))?;
+
+    // A `.part` can be whole: the download finished and the step after it
+    // (unzip, rename) failed. Asking for the bytes after the end gets 416, which
+    // would fail every retry. The server names the real size in Content-Range;
+    // if ours matches, the download is done, and if not, start it over.
+    if already > 0 && resp.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+        let range = resp
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok());
+        if part_is_whole(range, already) {
+            tracing::info!(label = asset.label, already, "download was already complete");
+            on_bytes(already, already);
+            return Ok(part);
+        }
+        tracing::warn!(label = asset.label, already, ?range, "partial download unusable, restarting");
+        std::fs::remove_file(&part)?;
+        return fetch(client, asset, root, on_bytes);
+    }
+
     if !resp.status().is_success() {
         return Err(anyhow!("{} returned {}", asset.url, resp.status()));
     }
@@ -458,6 +482,15 @@ fn fetch(
     }
     on_bytes(written, expect);
     Ok(part)
+}
+
+/// Whether a 416's `Content-Range: bytes */<total>` says a `.part` of
+/// `already` bytes is the whole file.
+fn part_is_whole(content_range: Option<&str>, already: u64) -> bool {
+    content_range
+        .and_then(|v| v.strip_prefix("bytes */"))
+        .and_then(|total| total.trim().parse::<u64>().ok())
+        == Some(already)
 }
 
 /// Extract every file in `zip` into `dir`, discarding the archive's internal
@@ -608,5 +641,15 @@ mod tests {
             assert!(!file_name_of(a.url).is_empty());
             assert!(a.url.starts_with("https://"), "assets must be fetched over TLS");
         }
+    }
+
+    #[test]
+    fn a_part_file_the_server_says_is_whole_counts_as_downloaded() {
+        // 416 to `Range: bytes=N-` carries `Content-Range: bytes */<total>`.
+        assert!(part_is_whole(Some("bytes */1000"), 1000));
+        assert!(!part_is_whole(Some("bytes */1000"), 999));
+        assert!(!part_is_whole(Some("bytes */1000"), 1001));
+        assert!(!part_is_whole(Some("bytes */*"), 1000));
+        assert!(!part_is_whole(None, 1000));
     }
 }

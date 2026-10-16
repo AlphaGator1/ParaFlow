@@ -1012,7 +1012,7 @@
         "The Install button shows only what is still left to download; a note below it says how much is already on the computer.",
         "The user clicks Install; each file downloads in turn with a progress bar, and files already present show as skipped.",
         "On success the window shrinks back to the overlay at the bottom of the screen, the user guide opens once in the browser, and dictation starts.",
-        "On failure the error is shown and the choice screen returns; retrying resumes the partial download."
+        "On failure the error is shown and the choice screen returns; retrying resumes a partial download and reuses a finished one, but an archive that would not unpack is fetched again."
       ],
       "keyFiles": [
         {
