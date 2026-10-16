@@ -1136,7 +1136,7 @@
         },
         {
           "name": "UpdateMode",
-          "what": "Set during an in-place upgrade; the hook then skips creating the shortcut and skips the data-deletion prompt."
+          "what": "Set during an in-place update; the hooks then neither create nor delete the guide shortcut, and skip the data-deletion prompt."
         },
         {
           "name": "NoShortcutMode",

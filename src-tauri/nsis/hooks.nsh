@@ -34,9 +34,11 @@
 !macroend
 
 !macro NSIS_HOOK_POSTUNINSTALL
-  ; Not gated on $UpdateMode: an update replaces the shortcut in POSTINSTALL
-  ; anyway, and a stale link pointing into a directory that no longer exists is
-  ; worse than a missing one.
+  ; Gated on $UpdateMode, as Tauri gates its own shortcuts just above. An
+  ; uninstall run as part of an update (/UPDATE) is followed by an install that
+  ; also sees $UpdateMode = 1, and POSTINSTALL deliberately skips creating the
+  ; shortcut then - so deleting it here would lose it for good, while the
+  ; ParaFlow shortcut beside it survived.
   ;
   ; Deleted from BOTH shell contexts, explicitly, because the context here is
   ; not ours and cannot be assumed. Tauri runs `SetShellVarContext current`
@@ -46,12 +48,14 @@
   ; machine-wide one. That left the shortcut behind on exactly one path, which
   ; is the kind of conditional miss that survives casual testing. Deleting from
   ; both contexts cannot be wrong under any install mode.
-  SetShellVarContext all
-  Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME} User Guide.lnk"
-  Delete "$SMPROGRAMS\${PRODUCTNAME} User Guide.lnk"
-  SetShellVarContext current
-  Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME} User Guide.lnk"
-  Delete "$SMPROGRAMS\${PRODUCTNAME} User Guide.lnk"
+  ${If} $UpdateMode <> 1
+    SetShellVarContext all
+    Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME} User Guide.lnk"
+    Delete "$SMPROGRAMS\${PRODUCTNAME} User Guide.lnk"
+    SetShellVarContext current
+    Delete "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME} User Guide.lnk"
+    Delete "$SMPROGRAMS\${PRODUCTNAME} User Guide.lnk"
+  ${EndIf}
 
   ; --- make "delete application data" actually mean something ---------------
   ;
