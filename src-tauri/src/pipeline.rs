@@ -84,8 +84,8 @@ pub enum Stage {
 struct Active {
     /// Ring offset recording started from.
     start: u64,
-    /// When capture began - the latency figure and the latch ceiling both
-    /// measure from here.
+    /// When capture began - the tap filter and the latch ceiling measure from
+    /// here. The latency figure does not: it starts at release.
     began: Instant,
     /// True when recording is latched on rather than key-held.
     latched: bool,
@@ -257,6 +257,10 @@ impl Pipeline {
 
     /// End the utterance: transcribe, clean up and paste, or discard a tap.
     fn finish(&mut self, a: Active, listening: &Arc<AtomicBool>, last_activity: &mut Instant) {
+        // The overlay's "Pasted in N ms" is release-to-paste, the wait the
+        // user actually feels. Timing it from `began` would count the whole
+        // time they spent speaking.
+        let released = Instant::now();
         listening.store(false, Ordering::Relaxed);
         if a.latched {
             // Cleared before the slow work below, not after. While it is set
@@ -275,7 +279,7 @@ impl Pipeline {
             return;
         }
 
-        match self.handle_utterance(a.start, a.began) {
+        match self.handle_utterance(a.start, released) {
             Ok(Some(stage)) => self.emit(stage),
             Ok(None) => self.emit(Stage::Idle),
             Err(e) => {
@@ -326,7 +330,7 @@ impl Pipeline {
 
     /// Pull the audio, transcribe it, clean it up, and paste. Returns `None`
     /// when the audio held no speech worth pasting.
-    fn handle_utterance(&self, start: u64, began: Instant) -> anyhow::Result<Option<Stage>> {
+    fn handle_utterance(&self, start: u64, released: Instant) -> anyhow::Result<Option<Stage>> {
         self.emit(Stage::Transcribing);
 
         let samples = self.mic.take_since(start)?;
@@ -381,7 +385,7 @@ impl Pipeline {
         );
         inject::paste(&text)?;
 
-        Ok(Some(Stage::Done { text, latency_ms: began.elapsed().as_millis() }))
+        Ok(Some(Stage::Done { text, latency_ms: released.elapsed().as_millis() }))
     }
 
     /// Feed the overlay a peak level while recording, so the UI can show the

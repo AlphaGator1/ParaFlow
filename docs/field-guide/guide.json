@@ -815,7 +815,7 @@
         "A user holds the chord: the first press of a burst shows 'Opening mic…', then 'Listening…' with a 13-bar level meter.",
         "If the user double-taps instead, it shows 'Hands-free' with a running clock, and counts down during the last 20 s before the automatic stop.",
         "The user releases: 'Transcribing…', then 'Cleaning up…' when cleanup is on.",
-        "The pasted text and 'Pasted in N ms' show for 2.6 s (N counts from when recording started), then 'Ready' counts down until the mic closes; an error shows for 5 s.",
+        "The pasted text and 'Pasted in N ms' show for 2.6 s (N counts from key release to paste), then 'Ready' counts down until the mic closes; an error shows for 5 s.",
         "A tap under 250 ms, or audio with no speech, goes straight back to Ready with nothing pasted.",
         "If the pipeline cannot start at all, the error stays on screen until restart."
       ],
