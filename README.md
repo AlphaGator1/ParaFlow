@@ -154,19 +154,22 @@ what you bundle matter far more than how you compress it:
 | Parakeet only, weights on first run, CUDA | ~1.44 GB |
 | Parakeet only, weights on first run, Vulkan | **~79 MB** |
 
-The intended shape: ship the app plus runtimes, and pull weights on first
-launch into `%LOCALAPPDATA%\ParaFlow\models\` with progress in the HUD —
-resumable and checksum-verified, which is why it belongs in Rust rather than
-in an NSIS download plugin.
+So the installer ships the app alone, and first-run setup (above) pulls the
+runtimes and weights into `%LOCALAPPDATA%\ParaFlow\` with progress on screen.
+Downloads resume after an interruption, and each one's size is checked against
+the server's `Content-Length`; there is no checksum. That logic is why it lives
+in Rust rather than in an NSIS download plugin.
 
 The whisper fallback costs ~2.3 GB (1472 MB model + 851 MB runtime) and should
 be an optional component rather than a default: it exists for decoder prompt
 biasing, which Parakeet lacks, and as an escape hatch if Parakeet mishears a
-particular voice.
+particular voice. First-run setup does not fetch it; only `scripts/setup.ps1`
+does.
 
-Until that exists, `resolve()` in `lib.rs` walks up from the executable and
-finds the project-root `vendor/` and `models/` directories, so development
-works as-is and a built app must be run from the repo.
+`resolve()` in `lib.rs` looks in `%LOCALAPPDATA%\ParaFlow` first (where
+`vendor/` becomes `runtimes/`), then walks up from the executable to the
+project-root `vendor/` and `models/`. An installed build therefore runs on its
+own, and a development checkout works as-is.
 
 ### User guide
 
@@ -201,8 +204,9 @@ build step.
 ## Requirements
 
 - Windows 10/11 x64
-- NVIDIA GPU (optional — falls back to CPU, which is fine for short utterances
-  on a many-core part)
+- A GPU. NVIDIA (CUDA) is fastest; without the NVIDIA driver ParaFlow uses
+  Vulkan, which keeps transcription fast but makes cleanup much slower (see
+  *CUDA or Vulkan*)
 - Node 20+, Rust 1.77+, and MSVC build tools + Windows SDK
 
 ## Setup
@@ -247,12 +251,18 @@ The hotkey and the latch both live in two places - the settings store and the
 hook's own state - so `save_settings` pushes each into the hook rather than
 letting the hook read settings on the keystroke path.
 
-**Rebinding** uses the low-level hook in a capture mode: it reads the chord and
-swallows every keystroke while doing so, since the user is pressing arbitrary
-combinations and having the capture field also open the Start menu would be its
-own bug. It records the *largest* set of keys held at once rather than the
-final state, because releasing a chord is gradual and reading the last key up
-would capture one key.
+**Rebinding** reads the chord from key events in the Settings window itself.
+The global hook is blind while ParaFlow's own window has focus - WebView2
+installs its own low-level hook on focus, and hooks run last-installed-first -
+so the keys are where the DOM sees them. Either way it records the *largest*
+set of keys held at once rather than the final state, because releasing a chord
+is gradual and reading the last key up would capture one key.
+
+The hook's capture mode is armed alongside as a fallback, for combinations the
+shell reserves (some `Win`+letter chords never reach the webview): start
+capture, focus another window, press the chord. While it is armed, push-to-talk
+is off and every keystroke is swallowed, so the capture field cannot also open
+the Start menu.
 
 ### Configuration
 
@@ -266,6 +276,8 @@ reproduced without editing someone's saved configuration. All optional:
 | `PARAFLOW_CLEANUP_MODEL` | `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` | cleanup model |
 | `PARAFLOW_NO_CLEANUP` | unset | set to anything to paste raw transcripts |
 | `PARAFLOW_IDLE_SECS` | `30` | idle time before the mic is released |
+| `PARAFLOW_NO_LATCH` | unset | set to anything to turn off the double-tap hands-free latch |
+| `PARAFLOW_FORCE_SETUP` | unset | set to anything to show the first-run setup screen on a machine that is already set up |
 | `PARAFLOW_LOG` | `paraflow_lib=debug,info` | tracing filter |
 
 ```powershell
@@ -289,7 +301,7 @@ $env:PARAFLOW_ASR = "whisper"; npm run tauri dev -- --release
   │  pipeline thread                                               │
   │                                                                │
   │   MicSession ────── opens on the first press of a burst,       │
-  │        │            closes after 30 s idle. 120 s ring buffer;  │
+  │        │            closes after 30 s idle. 150 s ring buffer;  │
   │        │            mark() reaches back 300 ms for pre-roll     │
   │        ▼                                                       │
   │   resample ──────── rubato FFT, device rate → 16 kHz mono      │
@@ -374,11 +386,14 @@ reports a *press*. Push-to-talk needs the release too, so the app installs a
 low-level keyboard hook and watches raw transitions. The hook thread does nothing
 but forward events — Windows silently uninstalls hooks that block for too long.
 
-**The mic is never closed.** Opening a capture device costs 100–300 ms, which
-would land in the middle of the latency budget. The stream opens once at startup
-and every sample flows into a ring buffer, so starting a recording is just
-noting an offset. This also gives pre-roll for free: `mark()` reaches back 300 ms,
-so the syllable that beat your keystroke is already captured.
+**The mic stays open for a burst, not all day.** Opening a capture device costs
+100–300 ms, which would land in the middle of the latency budget, but an
+always-open microphone leaves the capture light on for hours. So the first press
+of a burst opens it, and it closes after the idle timeout (see *Sessions* above).
+While it is open every sample flows into a ring buffer, so starting a recording
+is just noting an offset. That also gives pre-roll for free: `mark()` reaches
+back 300 ms, so the syllable that beat your keystroke is already captured. Only
+the press that opens the session goes without, and it is marked after the chime.
 
 **The model never unloads.** Cold-loading `large-v3-turbo` takes ~840 ms. Paying
 that per utterance would dominate everything else, so whisper.cpp runs as a
@@ -390,9 +405,16 @@ drops characters in apps that throttle input, breaks IME state, and is slow for
 long passages. Clipboard + `Ctrl`+`V` is atomic and works everywhere. The
 previous clipboard contents are restored afterwards.
 
-**Modifiers are explicitly released before pasting.** The app suppresses the Win
-key-up to stop the Start menu from opening, so the target app can still believe
-Win is held. Sending `Ctrl`+`V` on top of that would fire `Win`+`Ctrl`+`V`.
+**Modifiers are explicitly released before pasting.** The hook reports a release
+as soon as any one key of the chord comes up, and a hands-free stop arrives with
+the whole chord held, so the rest of the chord can still be down at paste time.
+Sending `Ctrl`+`V` on top of a held Win would fire `Win`+`Ctrl`+`V`.
+
+**The Win key-up is not swallowed.** A `Ctrl`+`Win` chord would otherwise open
+the Start menu on every release, and swallowing the key-up stops that at the
+cost of leaving every app believing Win is still held. Instead the hook injects
+a no-op key (`0xFC`, `VK_NONAME`) while Win is down, which marks the press as
+used, and lets the real key-up through.
 
 **The HUD never takes focus.** It is configured `focus: false` and
 `pointer-events: none`. A window that steals focus would receive its own paste.
@@ -593,7 +615,8 @@ not from the model choice.
 
 ### Cleanup pass
 
-Qwen3-4B-Instruct Q4\_K\_M, 2.8 GB VRAM, over 13 cases in `examples/cleanup.rs`:
+Qwen3-4B-Instruct Q4\_K\_M, 2.8 GB VRAM, measured over the 13 cases
+`examples/cleanup.rs` had at the time (it has 15 now):
 
 ```
   mean 197 ms  including one two-minute case; ~65 ms without it
@@ -624,9 +647,10 @@ outgrew them.** Both failed in the direction that is hardest to notice:
   few extra seconds is cheap and losing cleanup entirely is not. It now scales
   with expected output, capped at 8 s. The two-minute case takes 1.78 s.
 
-Run the harness after any prompt, model, or style change. Three cases are
+Run the harness after any prompt, model, or style change. Four cases are
 adversarial — two catch the model answering instead of transcribing, one
-catches it inserting dictionary terms that were never spoken — and the
+catches it inserting dictionary terms that were never spoken, and one catches
+it rewriting an ordinary word that merely sounds like a term — and the
 two-minute case is what the latch actually produces:
 
 ```powershell
@@ -686,7 +710,7 @@ models/                    ggml + gguf weights               (gitignored)
 cd src-tauri; cargo test --lib
 ```
 
-53 unit tests, weighted toward the things that failed silently in development:
+54 unit tests (plus one network test, ignored by default), weighted toward the things that failed silently in development:
 side-agnostic modifier mapping (a transposed `VK_LCONTROL` once made the hotkey
 unpressable), ring-buffer marks surviving a wrap, resampling that keeps every
 sample it owes including the tail, and the cleanup guards.
