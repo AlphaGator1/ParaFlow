@@ -1,0 +1,4 @@
+# Drafts and fact-check output from a guide build.
+.build/
+# The rendered page: regenerate it with `node guide.mjs render`.
+guide.html
