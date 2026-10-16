@@ -31,9 +31,7 @@ Once installed, hold `Ctrl`+`Win`, speak, and let go. The full guide is in
 
 ## Status
 
-Working and in daily use. Everything below is real and measured on an RTX 5090;
-what is *not* done is in [NEXT.md](NEXT.md), which is deliberately candid about
-it.
+Working and in daily use. Everything below is real and measured on an RTX 5090.
 
 | | |
 |---|---|
@@ -604,7 +602,7 @@ One caveat remains:
 - **Parakeet has no prompt biasing.** Its only knobs are `--decoder`, `--lang`,
   and `--stream`. whisper-server's `--prompt` can bias decoding toward supplied
   vocabulary; Parakeet has no equivalent, which changes how a personal
-  dictionary has to be built (see `NEXT.md`). This is the main reason whisper
+  dictionary has to be built (see *Personal dictionary*). This is the main reason whisper
   stays selectable rather than being deleted.
 
 Among the whisper models, the counterintuitive result is that **an English-only
