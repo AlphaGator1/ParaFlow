@@ -42,10 +42,10 @@ pub fn paste(text: &str) -> Result<()> {
         return Ok(());
     }
 
-    // The push-to-talk chord was just released, but the modifiers may still be
-    // logically down as far as the target app is concerned - and we suppress
-    // the Win key-up ourselves to stop the Start menu. Sending Ctrl+V on top
-    // of a stuck Win would fire Win+Ctrl+V instead of pasting.
+    // The chord's other keys may still be down when we get here: the hook
+    // reports Up as soon as any one key of the chord is released, and a
+    // hands-free stop arrives with the whole chord held. Sending Ctrl+V on top
+    // of a held Win would fire Win+Ctrl+V instead of pasting.
     release_modifiers()?;
 
     let saved = get_clipboard_text().unwrap_or(None);
