@@ -372,6 +372,9 @@ fn save_settings(app: tauri::AppHandle, next: settings::Settings) -> Result<(), 
     // The hook holds its own copy of the chord, so push the new one in.
     if next.hotkey != previous.hotkey {
         hotkey::set_chord(next.chord());
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            let _ = tray.set_tooltip(Some(tray_tooltip(&next.chord())));
+        }
     }
     // Same for the latch: the double-press test happens on the hook thread,
     // so switching it off has to reach the hook rather than only the settings.
@@ -544,6 +547,15 @@ fn start_polish() -> Option<Polish> {
     }
 }
 
+const TRAY_ID: &str = "paraflow-tray";
+
+/// The tray's hover text. Built from the live chord, never written out, for
+/// the same reason the overlay reads it from settings: a hint naming the old
+/// keys after a rebind reads as "the change did not take".
+fn tray_tooltip(chord: &hotkey::Chord) -> String {
+    format!("ParaFlow - hold {} to dictate", chord.label())
+}
+
 fn build_tray(app: &tauri::AppHandle) -> Result<()> {
     use tauri::menu::{PredefinedMenuItem, Submenu};
 
@@ -584,9 +596,9 @@ fn build_tray(app: &tauri::AppHandle) -> Result<()> {
         ],
     )?;
 
-    TrayIconBuilder::with_id("paraflow-tray")
+    TrayIconBuilder::with_id(TRAY_ID)
         .icon(app.default_window_icon().cloned().ok_or_else(|| anyhow!("no default icon"))?)
-        .tooltip("ParaFlow - hold Ctrl+Win to dictate")
+        .tooltip(tray_tooltip(&settings::current().chord()))
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
