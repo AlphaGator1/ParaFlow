@@ -120,7 +120,7 @@ export default function Setup({ status }: { status: SetupStatus }) {
           "Spoken corrections are typed literally — you'd get “Tuesday, no, Wednesday”",
           "No lists, and no adapting to the app you're in",
         ]}
-        cost="Choose this if disk space or download size matters most. You can add cleanup later."
+        cost="Choose this if disk space or download size matters most. Cleanup is not downloaded, and cannot be added from inside the app afterwards."
       />
 
       {error && <p className="error">{error}</p>}
