@@ -286,8 +286,10 @@ pub fn set_latch_enabled(enabled: bool) {
 /// Tell the hook whether the pipeline is currently recording hands-free.
 ///
 /// Set to true the moment a latch starts and false the moment it ends -
-/// before any slow work - because while it is set every press is turned into
-/// a stop, and a press that arrived during transcription would be swallowed.
+/// before any slow work - because while it is set every press is sent as
+/// `ToggleLatch`. A press during transcription is read once the pipeline is
+/// idle again, where `ToggleLatch` means "start hands-free", so it would open
+/// a latched recording instead of an ordinary held one.
 pub fn set_latched(latched: bool) {
     let Some(cell) = STATE.get() else { return };
     let mut st = cell.lock();

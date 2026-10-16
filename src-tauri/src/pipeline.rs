@@ -264,9 +264,11 @@ impl Pipeline {
         listening.store(false, Ordering::Relaxed);
         if a.latched {
             // Cleared before the slow work below, not after. While it is set
-            // the hook turns every press into a stop, so a press arriving
-            // during transcription would be swallowed instead of starting the
-            // next dictation.
+            // the hook turns every press into ToggleLatch. A press during
+            // transcription waits in the channel, and by the time it is read
+            // nothing is recording - so ToggleLatch would start a hands-free
+            // recording, and the release that should have ended an ordinary
+            // dictation would be ignored, leaving the microphone on.
             crate::hotkey::set_latched(false);
         }
         *last_activity = Instant::now();

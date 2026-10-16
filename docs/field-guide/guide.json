@@ -272,7 +272,7 @@
         }
       ],
       "watchOuts": [
-        "Always clear the hook's latched flag before transcribing, not after, because while it is set every press is a stop and a press during transcription would be swallowed.",
+        "Always clear the hook's latched flag before transcribing, not after, because a press read while it is still set arrives as ToggleLatch and starts an unwanted hands-free recording.",
         "Never raise MAX_LATCHED (120 s) to within 10 s of audio::RING_SECONDS (150 s), because a test pins that headroom and the ring silently drops the start of over-long recordings.",
         "Always read the foreground app before cleanup, because cleanup takes long enough for the user to switch windows and get the wrong style.",
         "Never let the cleanup step fail an utterance, because a stage that loses the user's words is worse than none; Polish::apply returns the raw text on any failure.",
