@@ -537,8 +537,7 @@
         "Never assume PARAFLOW_ASR=whisper works on an installed copy, because first-run setup downloads only Parakeet; whisper binaries and weights come only from scripts/setup.ps1.",
         "Never warm up with silence, because a recogniser can short-circuit a silent buffer and leave the decode path uncompiled; warm_up uses low-amplitude noise.",
         "Always re-run the test scripts after bumping an upstream runtime, because the CLI flags, the 'file' field and the JSON 'text' field live outside the Rust types, and new CUDA builds may drop the PTX Blackwell cards rely on.",
-        "Never rely on the CPU path for Parakeet, because `gpu` is derived from the binary path containing whisper-cpu, so it is always true for Parakeet and PARAKEET_DEVICE=cpu is never set.",
-        "Never run test-asr.ps1 on its default port while the app runs with cleanup on, because its default 8179 is the cleanup server's port despite the comment."
+        "Never rely on the CPU path for Parakeet, because `gpu` is derived from the binary path containing whisper-cpu, so it is always true for Parakeet and PARAKEET_DEVICE=cpu is never set."
       ],
       "models": [],
       "rules": [

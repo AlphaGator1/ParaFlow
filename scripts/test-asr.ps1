@@ -15,7 +15,7 @@
 [CmdletBinding()]
 param(
     [string]$Model = "ggml-large-v3-turbo.bin",
-    [int]$Port = 8179,   # deliberately not the app's 8178, so both can run
+    [int]$Port = 8188,   # clear of the app's 8178 (speech) and 8179 (cleanup), and test-parakeet's 8187, so all can run
     [switch]$Cpu
 )
 
@@ -55,7 +55,8 @@ $proc = Start-Process -FilePath $server -ArgumentList $serverArgs `
     -PassThru -WindowStyle Hidden -RedirectStandardError $stderrLog
 
 try {
-    # Wait for the listener, the same way asr.rs::await_ready does.
+    # Wait for the listener, the same way sidecar.rs::await_ready does: any
+    # HTTP answer except 503, which some servers send while still loading.
     $loadSw = [System.Diagnostics.Stopwatch]::StartNew()
     $ready = $false
     while ($loadSw.Elapsed.TotalSeconds -lt 120) {
@@ -64,12 +65,12 @@ try {
             throw "sidecar exited during startup:`n$why"
         }
         try {
-            Invoke-WebRequest "http://127.0.0.1:$Port/" -TimeoutSec 1 -UseBasicParsing | Out-Null
-            $ready = $true; break
+            $r = Invoke-WebRequest "http://127.0.0.1:$Port/" -TimeoutSec 1 -UseBasicParsing
+            if ($r.StatusCode -ne 503) { $ready = $true; break }
         } catch {
-            if ($_.Exception.Response) { $ready = $true; break }  # any HTTP answer counts
-            Start-Sleep -Milliseconds 150
+            if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -ne 503) { $ready = $true; break }
         }
+        Start-Sleep -Milliseconds 150
     }
     if (-not $ready) { throw "sidecar never became ready" }
     Write-Host ("  ready in {0} ms" -f [int]$loadSw.ElapsedMilliseconds) -ForegroundColor DarkGray
