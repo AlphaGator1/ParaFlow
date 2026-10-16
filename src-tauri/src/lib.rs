@@ -613,6 +613,9 @@ fn build_tray(app: &tauri::AppHandle) -> Result<()> {
                 if let Err(e) = s.save() {
                     tracing::warn!(error = %e, "could not save overlay position");
                 }
+                // An open Settings form holds its own copy; without this its
+                // next Save would put the old position back.
+                let _ = app.emit("paraflow://settings-changed", s);
                 return;
             }
             match id {

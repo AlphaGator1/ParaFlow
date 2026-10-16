@@ -972,7 +972,7 @@
         },
         {
           "to": "hud",
-          "why": "Emits paraflow://settings-changed so the overlay's chord hint and auto-hide update at once."
+          "why": "Save and the tray emit paraflow://settings-changed, updating the overlay hint and an open form's overlay position."
         },
         {
           "to": "app-shell",

@@ -142,11 +142,18 @@ export default function Settings() {
       setS((prev) => (prev ? { ...prev, hotkey: e.payload } : prev));
     });
     const unNotice = listen<string>("paraflow://notice", (e) => setNotice(e.payload));
+    // The tray can move the overlay while this form is open. Take that one
+    // field, or Save would write the old position back over it. The rest of
+    // the form may hold edits the user has not saved yet, so leave it alone.
+    const unChanged = listen<Settings>("paraflow://settings-changed", (e) =>
+      setS((prev) => (prev ? { ...prev, overlay: e.payload.overlay } : prev)),
+    );
 
     return () => {
       unPreview.then((f) => f());
       unDone.then((f) => f());
       unNotice.then((f) => f());
+      unChanged.then((f) => f());
       window.clearTimeout(savedTimer.current);
       // Leaving with capture armed would swallow every keystroke system-wide.
       invoke("cancel_hotkey_capture").catch(() => {});
