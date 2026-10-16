@@ -254,25 +254,32 @@ fn ordered(keys: &HashSet<u32>) -> Vec<u32> {
 pub fn set_chord(chord: Chord) {
     let Some(cell) = STATE.get() else { return };
     let normalized = Chord { keys: chord.keys.iter().copied().map(canonical).collect() };
-    let mut st = cell.lock();
-    tracing::info!(chord = %normalized.label(), "push-to-talk chord changed");
-    st.chord = normalized;
-    // Any partially-held state refers to the old chord.
-    st.held.clear();
-    st.engaged = false;
-    st.last_up = None;
-    st.suppress_arm = false;
+    let label = normalized.label();
+    {
+        let mut st = cell.lock();
+        st.chord = normalized;
+        // Any partially-held state refers to the old chord.
+        st.held.clear();
+        st.engaged = false;
+        st.last_up = None;
+        st.suppress_arm = false;
+    }
+    // Logged after releasing the lock: the hook thread waits on it for every
+    // keystroke, and Windows drops hooks that take too long.
+    tracing::info!(chord = %label, "push-to-talk chord changed");
 }
 
 /// Arm or disarm double-tap latching without reinstalling the hook.
 pub fn set_latch_enabled(enabled: bool) {
     let Some(cell) = STATE.get() else { return };
-    let mut st = cell.lock();
-    if st.latch_enabled == enabled {
-        return;
+    {
+        let mut st = cell.lock();
+        if st.latch_enabled == enabled {
+            return;
+        }
+        st.latch_enabled = enabled;
+        st.last_up = None;
     }
-    st.latch_enabled = enabled;
-    st.last_up = None;
     tracing::info!(enabled, "hands-free latch setting changed");
 }
 
@@ -294,19 +301,27 @@ pub fn set_latched(latched: bool) {
 /// the Start menu would be its own bug.
 pub fn begin_capture(tx: Sender<CaptureEvent>) {
     let Some(cell) = STATE.get() else { return };
-    let mut st = cell.lock();
-    st.held.clear();
-    st.engaged = false;
-    st.capture = Some(Capture { best: Vec::new(), tx });
+    {
+        let mut st = cell.lock();
+        st.held.clear();
+        st.engaged = false;
+        st.capture = Some(Capture { best: Vec::new(), tx });
+    }
     tracing::info!("hotkey capture started");
 }
 
 /// Abandon capture without changing anything.
 pub fn cancel_capture() {
     let Some(cell) = STATE.get() else { return };
-    let mut st = cell.lock();
-    if st.capture.take().is_some() {
-        st.held.clear();
+    let cancelled = {
+        let mut st = cell.lock();
+        let was = st.capture.take().is_some();
+        if was {
+            st.held.clear();
+        }
+        was
+    };
+    if cancelled {
         tracing::info!("hotkey capture cancelled");
     }
 }
@@ -389,8 +404,8 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
         }
         let current = ordered(&st.held);
         let empty = st.held.is_empty();
-        tracing::debug!(vk, is_down, is_up, ?current, empty, "capture saw a key");
 
+        let mut outgoing = None;
         if let Some(cap) = st.capture.as_mut() {
             if current.len() > cap.best.len() {
                 cap.best = current.clone();
@@ -399,17 +414,19 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                 let chord = std::mem::take(&mut cap.best);
                 let tx = cap.tx.clone();
                 st.capture = None;
-                drop(st);
                 if !chord.is_empty() {
-                    let _ = tx.send(CaptureEvent::Done(chord));
+                    outgoing = Some((tx, CaptureEvent::Done(chord)));
                 }
             } else {
-                let tx = cap.tx.clone();
-                drop(st);
-                let _ = tx.send(CaptureEvent::Preview(current));
+                outgoing = Some((cap.tx.clone(), CaptureEvent::Preview(current.clone())));
             }
-        } else {
-            drop(st);
+        }
+        drop(st);
+
+        // Logged outside the lock, like the push-to-talk log below.
+        tracing::debug!(vk, is_down, is_up, ?current, empty, "capture saw a key");
+        if let Some((tx, event)) = outgoing {
+            let _ = tx.send(event);
         }
         // Swallow it. The user is pressing arbitrary combinations; letting them
         // reach other apps would fire whatever they happen to be bound to.
