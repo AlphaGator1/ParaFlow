@@ -33,11 +33,11 @@
       "oneLiner": "Notices when the user holds, releases or double-taps the dictation key chord anywhere in Windows.",
       "summary": "A system-wide keyboard listener that turns the push-to-talk chord (Ctrl+Win by default) into three events: Down, Up and ToggleLatch. It uses a low-level keyboard hook (WH_KEYBOARD_LL, a Windows callback that sees every keystroke before apps do) because the simpler RegisterHotKey API only reports presses, and push-to-talk needs the release too. The hook runs on its own thread and stays fast: it updates a little state, pushes events into a channel, and for Win chords injects one no-op key. It also handles the double-tap 'hands-free latch' and a fallback capture mode for the settings screen's 'press your new chord' field.",
       "journey": [
-        "At startup, once the speech server (and the cleanup server, when cleanup is on) is ready, lib.rs starts a thread that installs the keyboard hook with the saved chord and latch setting.",
+        "At startup, once the speech server is ready (and the cleanup server, when cleanup is on, is ready or has failed to start), lib.rs starts a thread that installs the keyboard hook with the saved chord and latch setting.",
         "A user presses Ctrl and Win; once every key in the chord is held, the hook sends Down to the pipeline.",
         "Because the chord uses Win, the hook injects a harmless no-op key so Windows does not open the Start menu on release.",
         "The user lets go of either key; the hook sends Up and remembers when, so a quick second press can count as a double-tap.",
-        "With hands-free on, a second press within the double-press window (the Windows double-click time, clamped to 200-600 ms) sends ToggleLatch instead, locking recording on; any press while latched sends ToggleLatch to stop.",
+        "With hands-free on, a second press within the double-press window (the Windows double-click time, read once when the hook starts, clamped to 200-600 ms) sends ToggleLatch instead, locking recording on; any press while latched sends ToggleLatch to stop.",
         "In Settings, a new chord is read from the settings window's own key events, because the hook sees nothing while ParaFlow's window has focus.",
         "The hook's capture mode is armed alongside as a fallback: push-to-talk is off, every key is swallowed system-wide, and the largest set held at once fills the form.",
         "Saving settings pushes the new chord and latch switch straight into the hook without reinstalling it."
@@ -98,7 +98,7 @@
         }
       ],
       "watchOuts": [
-        "Never do slow work (logging while locked, I/O, waiting) inside hook_proc, because Windows silently uninstalls a low-level hook that takes too long.",
+        "Never do slow work (logging, I/O, waiting) inside hook_proc or while holding the hook's state lock anywhere, because the hook waits on that lock for every keystroke and Windows silently uninstalls a low-level hook that takes too long.",
         "Never swallow the Win key-up to stop the Start menu, because it leaves other apps believing Win is still held; the code injects a no-op key (0xFC) instead.",
         "Always ignore injected key events in the hook, because paste's own Ctrl down would otherwise re-engage the chord mid-paste and start recording again.",
         "Always keep the left/right key codes in canonical() correct and tested, because a transposed VK_LCONTROL once made Ctrl+Win impossible to press with no error.",
@@ -201,7 +201,7 @@
         "The user releases (or presses again to end a latch); presses shorter than 250 ms are ignored as mis-presses.",
         "Audio whose loudest sample is below the noise floor is discarded; otherwise it is transcribed (Transcribing).",
         "The foreground app's process name is read and the transcript is cleaned up in that app's style (Polishing), falling back to the raw text.",
-        "The text is pasted at the cursor and the overlay shows Done with the text and the milliseconds since recording began.",
+        "The text is pasted at the cursor and the overlay shows Done with the text and the milliseconds from the end of recording (key release, stop press or the ceiling) to the paste.",
         "Once nothing has been dictated for the idle timeout, counted from when the last dictation finished, the mic closes with a falling chime and the overlay shows the mic as off."
       ],
       "keyFiles": [
@@ -272,7 +272,7 @@
         }
       ],
       "watchOuts": [
-        "Always clear the hook's latched flag before transcribing, not after, because a press read while it is still set arrives as ToggleLatch and starts an unwanted hands-free recording.",
+        "Always clear the hook's latched flag before transcribing, not after, because a press made during transcription is sent as ToggleLatch while it is set, waits in the channel, and then starts an unwanted hands-free recording that leaves the microphone on.",
         "Never raise MAX_LATCHED (120 s) to within 10 s of audio::RING_SECONDS (150 s), because a test pins that headroom and the ring silently drops the start of over-long recordings.",
         "Always read the foreground app before cleanup, because cleanup takes long enough for the user to switch windows and get the wrong style.",
         "Never let the cleanup step fail an utterance, because a stage that loses the user's words is worse than none; Polish::apply returns the raw text on any failure.",
@@ -297,7 +297,7 @@
       "summary": "Delivers dictated text by borrowing the clipboard: it saves the current clipboard text, places the transcript there, synthesises Ctrl+V with SendInput (the Windows API for faking keyboard input), waits 120 ms for the app to paste, and puts the old text back if the clipboard still holds the transcript. This is used instead of typing characters one by one because typing drops characters in throttled apps, breaks IME (input method) state and is slow for long passages. The same file also reports the foreground app's process name, which the cleanup step uses to pick a writing style.",
       "journey": [
         "Before cleanup, the pipeline asks which app is in front; its executable name (for example code or outlook) is read, lowercased, without .exe.",
-        "Any modifier key still physically held (Ctrl, Shift, Alt, Win) gets a synthetic key-up, so the paste is not read as Win+Ctrl+V.",
+        "Any modifier key still held (Ctrl, Shift, Alt, Win) gets a synthetic key-up, so the paste is not read as Win+Ctrl+V; chord keys can still be down because Up fires when any one lifts.",
         "The current clipboard text is saved and the transcript is placed on the clipboard.",
         "Ctrl+V is sent to the focused app and ParaFlow waits 120 ms for it to paste.",
         "If the clipboard still holds the transcript, the old text is restored; if the user copied something meanwhile, it is left alone."
@@ -436,7 +436,7 @@
         "The server is launched on port 8178 and given up to 180 s to load the model.",
         "A warm-up pushes one second of quiet random noise through the model, so GPU kernel compilation happens now rather than on the first dictation.",
         "A user releases the hotkey (or ends a hands-free recording); the pipeline turns the captured audio into a WAV and calls transcribe, which waits up to 120 s for the server.",
-        "The server returns JSON; the `text` field is split into lines, bracketed markers like [BLANK_AUDIO] or (wind blowing) are dropped, and the rest is joined.",
+        "The server returns JSON; the `text` field is split into lines, whole lines that are bracketed markers like [BLANK_AUDIO], (wind blowing) or *laughs* are dropped, and the rest is joined.",
         "The raw transcript goes on to cleanup, or straight to paste if cleanup is off; an empty one is discarded."
       ],
       "keyFiles": [
@@ -450,7 +450,7 @@
         },
         {
           "path": "src-tauri/src/lib.rs",
-          "what": "start_pipeline reads PARAFLOW_ASR and PARAFLOW_MODEL, locates and starts the server."
+          "what": "start_pipeline picks the backend, reads PARAFLOW_MODEL, then locates and starts the server via resolve()."
         },
         {
           "path": "src-tauri/src/pipeline.rs",
@@ -479,7 +479,7 @@
           "kind": "file",
           "ref": "scripts/test-parakeet.ps1",
           "when": "on demand",
-          "what": "Starts parakeet-server on its own port, transcribes a sample four times, and reports cold and warm latency, load time and size."
+          "what": "Starts parakeet-server on its own port, transcribes a sample four times by default, and reports cold and warm latency, load time and size."
         },
         {
           "name": "Whisper contract and latency check",
@@ -536,7 +536,7 @@
       "watchOuts": [
         "Never assume PARAFLOW_ASR=whisper works on an installed copy, because first-run setup downloads only Parakeet; whisper binaries and weights come only from scripts/setup.ps1.",
         "Never warm up with silence, because a recogniser can short-circuit a silent buffer and leave the decode path uncompiled; warm_up uses low-amplitude noise.",
-        "Always re-run the test scripts after bumping an upstream runtime, because the CLI flags, the 'file' field and the JSON 'text' field live outside the Rust types, and new CUDA builds may drop the PTX Blackwell cards rely on.",
+        "Always re-run the test scripts after bumping an upstream runtime, because the CLI flags, the 'file' field and the JSON 'text' field live outside the Rust types, and new CUDA builds may drop the PTX Blackwell cards rely on; test-parakeet.ps1 prints the raw body instead of failing when 'text' is missing, so read its transcript line.",
         "Never rely on the CPU path for Parakeet, because `gpu` is derived from the binary path containing whisper-cpu, so it is always true for Parakeet and PARAKEET_DEVICE=cpu is never set."
       ],
       "models": [],
@@ -681,14 +681,14 @@
         "index.html"
       ],
       "oneLiner": "Starts ParaFlow: tray icon, windows, permissions, and wiring every system together at launch.",
-      "summary": "The app shell is the Tauri host process: Tauri is a desktop framework where a Rust backend drives windows that render a React UI in WebView2, Microsoft's built-in browser engine. At launch it loads settings, builds the tray menu, and decides whether to show first-run setup or start dictating. Dictating means starting the speech and cleanup sidecars (separate GPU server processes), installing the keyboard hook on its own thread, and handing everything to the pipeline thread. It also holds `resolve()`, the shared lookup that finds runtimes and models in %LOCALAPPDATA%\\ParaFlow first and the repo's vendor/ and models/ folders second.",
+      "summary": "The app shell is the Tauri host process: Tauri is a desktop framework where a Rust backend drives windows that render a React UI in WebView2, Microsoft's built-in browser engine. At launch it loads settings, builds the tray menu, and decides whether to show first-run setup or start dictating. Dictating means spawning the pipeline thread, which starts the speech sidecar and, when cleanup is on and installed, the cleanup sidecar (separate GPU server processes), installs the keyboard hook on its own thread, and runs the dictation loop. It also holds `resolve()`, the shared lookup that finds runtimes and models in %LOCALAPPDATA%\\ParaFlow first and the repo's vendor/ and models/ folders second.",
       "journey": [
         "A user launches paraflow.exe; release builds are windowed, so no console flashes up.",
         "`run()` sets up logging, registers the UI-callable commands and the opener plugin, loads settings.json and builds the tray icon.",
         "Stale half-installed runtimes are purged, then the shell checks whether a speech server and model can be found.",
         "If not, the overlay window grows into the setup screen; if so, it is made click-through, placed on screen (or hidden, if the overlay setting says so), and the pipeline is spawned.",
         "The pipeline thread starts the speech sidecar, the optional cleanup sidecar and the keyboard-hook thread, then runs the dictation loop.",
-        "The user drives everything else from the tray: Settings, Show overlay, Overlay position, personal dictionary, data folder, user guide, Quit.",
+        "The user drives everything else from the tray, whose hover text names the current chord: Settings, Show overlay, Overlay position, personal dictionary, data folder, user guide, Quit.",
         "One React bundle serves every window: `?view=settings` renders the settings form, anything else renders the overlay."
       ],
       "keyFiles": [
@@ -808,7 +808,7 @@
         "src/App.tsx"
       ],
       "oneLiner": "Small on-screen panel showing whether ParaFlow is listening, working, or finished.",
-      "summary": "The HUD (heads-up display) is the small transparent, always-on-top panel, by default near the bottom of the screen. It shows what dictation is doing: a live level meter while listening, a spinner while transcribing or cleaning up, then the pasted text with the time since recording began. A LIVE/OFF badge mirrors whether the microphone device is actually open. It never takes focus and lets clicks pass through, because a focused overlay would receive its own paste; it just renders events the Rust pipeline emits.",
+      "summary": "The HUD (heads-up display) is the small transparent, always-on-top panel, by default near the bottom of the screen. It shows what dictation is doing: a live level meter while listening, a spinner while transcribing or cleaning up, then the pasted text with the time from the end of recording to the paste. A LIVE/OFF badge mirrors whether the microphone device is actually open. It never takes focus and lets clicks pass through, because a focused overlay would receive its own paste; it just renders events the Rust pipeline emits.",
       "journey": [
         "ParaFlow launches and the panel says 'Starting…' while models load, because the push-to-talk key does not work yet.",
         "Once the pipeline is ready it shows 'Ready — Hold Ctrl + Win to dictate' with the user's real chord, or paints nothing if auto-hide is on and the mic is closed.",
@@ -887,10 +887,10 @@
         "The form loads the live values with the get_settings command.",
         "The user clicks 'Change…' and presses a new chord; the largest set of keys held at once is kept, since keys are released one at a time.",
         "The user adjusts overlay position, auto-hide, mic close timeout, chimes, hands-free double-tap, and cleanup.",
-        "On Save, save_settings writes the file, updates the live copy, pushes chord and latch changes into the keyboard hook, and moves the overlay.",
+        "On Save, save_settings writes the file, updates the live copy, pushes chord and latch changes into the keyboard hook, rewrites the tray tooltip with a new chord, and moves the overlay.",
         "The overlay hears paraflow://settings-changed and updates its chord hint and auto-hide at once.",
         "Changing cleanup shows a notice asking for a restart, because it starts or stops a GPU sidecar.",
-        "Picking Tray → Overlay position moves the overlay and saves that choice to settings.json too, without the form."
+        "Picking Tray → Overlay position moves the overlay, saves that choice to settings.json, and emits paraflow://settings-changed, so an open form takes the new position and keeps its other unsaved edits."
       ],
       "keyFiles": [
         {
@@ -903,7 +903,7 @@
         },
         {
           "path": "src-tauri/src/lib.rs",
-          "what": "get_settings, save_settings and hotkey-capture commands; applies changes to hook and overlay."
+          "what": "get_settings, save_settings and hotkey-capture commands; applies changes to hook, tray tooltip and overlay; tray position saving."
         },
         {
           "path": "src-tauri/src/hotkey.rs",
@@ -926,7 +926,7 @@
         },
         {
           "name": "cleanup",
-          "what": "settings.json key: turns the LLM cleanup pass on or off (needs a restart)."
+          "what": "settings.json key: turns the LLM cleanup pass on or off (needs a restart); has no effect if setup never downloaded cleanup."
         },
         {
           "name": "chimes",
@@ -1002,12 +1002,12 @@
         "src-tauri/src/setup.rs",
         "src/Setup.tsx"
       ],
-      "oneLiner": "Detects the GPU and downloads the speech and cleanup models on first launch.",
+      "oneLiner": "Detects the GPU and downloads the speech recogniser, plus optional cleanup, on first launch.",
       "summary": "The installer ships no models, so on first launch ParaFlow shows a setup screen and downloads what it needs from GitHub releases and Hugging Face into %LOCALAPPDATA%\\ParaFlow. The user answers one question: dictation only, or dictation with cleanup. The GPU backend is decided for them: CUDA (NVIDIA's GPU platform) if the NVIDIA driver's nvcuda.dll loads, otherwise Vulkan, a cross-vendor graphics API. Downloads resume after interruption, are size-checked, and each unpacked archive is stamped complete so a half-finished install is never mistaken for a working one.",
       "journey": [
         "A user launches ParaFlow for the first time; it finds no speech server or speech model.",
         "The overlay window becomes a centred, clickable, focused window, 620 wide and as tall as its content, and shows the setup screen.",
-        "The screen says which GPU support was found and offers 'Dictation with cleanup' (recommended) or 'Dictation only', with sizes.",
+        "The screen says which GPU support was found and offers 'Dictation with cleanup' (recommended) or 'Dictation only', with sizes; the dictation-only card warns that cleanup cannot be added from inside the app afterwards.",
         "The Install button shows only what is still left to download; a note below it says how much is already on the computer.",
         "The user clicks Install; each file downloads in turn with a progress bar, and files already present show as skipped.",
         "On success the window shrinks back to the overlay at the bottom of the screen, the user guide opens once in the browser, and dictation starts.",
@@ -1067,7 +1067,7 @@
       "watchOuts": [
         "Never decide an archive is installed because its runtime folder has files, because CUDA runtimes unpack two archives into one folder; per-archive stamps in .installed/ prevent a missing cuBLAS library.",
         "Always answer 'is setup needed?' with the same resolve() lookup the pipeline uses, because a check of the install folder alone would show setup to developers who have vendor/.",
-        "Never append to a .part file when the server replies 200 instead of 206, because it ignored the Range request and sent the whole file.",
+        "Never append to a .part file when the server replies 200 instead of 206, because it ignored the Range request and sent the whole file; and never treat a 416 reply as a plain failure, because a .part left whole by a failed unzip or rename must be reused when its size matches the Content-Range total.",
         "Always mark skipped assets as skipped in progress events, because a skipped multi-GB model otherwise looks like a full re-download.",
         "Never test install behaviour from an app launched inside an MSIX-packaged host, because Windows silently redirects file access under %LOCALAPPDATA% to a per-package copy while the variable stays the same, so the app can use a different data folder than you inspect."
       ],
@@ -1089,13 +1089,13 @@
         "app-icon.png"
       ],
       "oneLiner": "Turns the app into a small Windows installer with icons and a guide shortcut.",
-      "summary": "ParaFlow ships as an NSIS installer (Nullsoft Scriptable Install System, the Windows installer format Tauri produces) built by `npm run tauri build`. The installer holds only the app and the user guide; models and runtimes are downloaded on first launch, so it stays a few megabytes. Tauri's bundle settings in src-tauri/tauri.conf.json pick the NSIS target, an all-users (perMachine) install into Program Files, the icon set and the one bundled resource, and point at src-tauri/nsis/hooks.nsh. Those hooks add a Start-menu shortcut to the user guide, remove it on uninstall, and make the uninstaller's \"delete application data\" checkbox actually remove the real data folder, %LOCALAPPDATA%\\ParaFlow, after asking.",
+      "summary": "ParaFlow ships as an NSIS installer (Nullsoft Scriptable Install System, the Windows installer format Tauri produces) built by `npm run tauri build`. The installer holds only the app and the user guide; models and runtimes are downloaded on first launch, so it stays a few megabytes. Tauri's bundle settings in src-tauri/tauri.conf.json pick the NSIS target, an all-users (perMachine) install into Program Files, the icon set and the one bundled resource, and point at src-tauri/nsis/hooks.nsh. Those hooks add a Start-menu shortcut to the user guide, remove it on a real uninstall (not the uninstall step of an update), and make the uninstaller's \"delete application data\" checkbox actually remove the real data folder, %LOCALAPPDATA%\\ParaFlow, after asking.",
       "journey": [
         "A developer runs `npm run tauri build`; Tauri builds the UI, compiles the release binary and wraps it in an NSIS installer under src-tauri/target/release/bundle/nsis/.",
         "A user runs the installer; because it is not code-signed, Windows SmartScreen warns first, and the all-users install asks for elevation once.",
         "The app lands in Program Files, with the user guide beside it as \"ParaFlow User Guide.html\".",
         "The post-install hook adds a \"ParaFlow User Guide\" Start-menu shortcut next to ParaFlow's own, unless this is an in-place update or the /NS (no shortcuts) switch was given.",
-        "On uninstall, the post-uninstall hook deletes the guide shortcut from both the all-users and the current-user Start menu.",
+        "On a real uninstall (not one run as part of an update), the post-uninstall hook deletes the guide shortcut from both the all-users and the current-user Start menu.",
         "If the user ticked \"delete application data\", the hook names %LOCALAPPDATA%\\ParaFlow and what is in it, and deletes it only if they answer Yes (the default is No)."
       ],
       "keyFiles": [
@@ -1170,7 +1170,7 @@
         "Never trust the shell context the uninstall hook inherits, because Tauri's delete-app-data branch switches it to the current user first; that once left the shortcut behind, so delete from both contexts.",
         "Never rely on Tauri's own \"delete application data\" handling, because it removes %LOCALAPPDATA%\\com.paraflow.dictation (the bundle id), a folder that never exists; the hook does the real delete.",
         "Never bundle vendor/ or models/ as resources, because the weights barely compress and bundling them copied gigabytes into target/debug on every dev run.",
-        "Always regenerate icons with `npx tauri icon app-icon.png` rather than editing one size, because every file in src-tauri/icons comes from that one image and a hand-edited size drifts from the rest; its iOS, Android and .icns outputs are gitignored."
+        "Never delete the guide shortcut in the uninstall hook when $UpdateMode is 1, because the install that follows an update also skips creating it, so the shortcut would be lost for good."
       ],
       "models": [],
       "rules": [
@@ -1278,7 +1278,7 @@
           "name": "Developer asset setup",
           "kind": "file",
           "ref": "scripts/setup.ps1",
-          "when": "once after cloning, and again after changing a pinned release tag",
+          "when": "once after cloning; after a release-tag change, only once the old zips and vendor folders are deleted",
           "what": "Downloads and unpacks runtimes into vendor/ and weights into models/, then checks the server binaries exist."
         },
         {
@@ -1379,7 +1379,7 @@
         },
         {
           "path": "docs/user-guide.html",
-          "what": "Self-contained end-user guide: overlay states, microphone behaviour, cleanup, settings, troubleshooting, privacy, uninstalling."
+          "what": "Self-contained end-user guide: overlay states, microphone, cleanup, settings, troubleshooting, privacy, uninstalling, third-party credits."
         },
         {
           "path": "LICENSE",
@@ -1414,8 +1414,8 @@
         "Never add external fonts, scripts or images to user-guide.html, because it must work with the network off, which is the product's whole pitch.",
         "Never rename the guide in one place, because the source path docs/user-guide.html is named in bundle.resources and the guide_path fallback in lib.rs, and the installed name \"ParaFlow User Guide.html\" in bundle.resources, GUIDE_FILE in lib.rs and the shortcut target in hooks.nsh.",
         "Always update the guide when user-visible numbers change, because it states the 30-second mic timeout, the 5-second-to-1-hour range, the two-minute hands-free limit and the quarter-second tap cutoff.",
-        "Always bump the version in the guide's footer along with package.json, Cargo.toml and tauri.conf.json, because it is typed in by hand.",
-        "Never trust README's descriptive sections over the code, because several have drifted: the architecture diagram and Layout still name whisper-server, \"Why these choices\" says the mic is never closed, and Packaging says a built app must run from the repo."
+        "Always bump the version in the guide's footer along with package.json, Cargo.toml and tauri.conf.json, and refresh package-lock.json, because the footer is typed in by hand and the lockfile has lagged behind before.",
+        "Never trust README's descriptive sections over the code, because some have drifted: the architecture diagram, Layout and \"The model never unloads\" still describe whisper-server, and it says the previous clipboard is restored when only text is, and only if the transcript is still there."
       ],
       "models": [],
       "rules": [
@@ -1577,7 +1577,7 @@
     },
     {
       "term": "SendInput",
-      "meaning": "The Windows API that injects synthetic keyboard events; ParaFlow uses it to send Ctrl+V and release stuck modifier keys."
+      "meaning": "The Windows API that injects synthetic keyboard events; ParaFlow uses it to send Ctrl+V and release modifier keys still held from the chord."
     },
     {
       "term": "Paste settle",
@@ -1702,12 +1702,20 @@
     {
       "term": "Injected key event",
       "meaning": "A keystroke synthesised by software (flagged LLKHF_INJECTED). ParaFlow's hook ignores these, so its own Ctrl+V cannot restart recording."
+    },
+    {
+      "term": ".part file",
+      "meaning": "An unfinished download in the install folder; ParaFlow resumes it with an HTTP Range request, or reuses it when a 416 reply shows it is whole."
+    },
+    {
+      "term": "HTTP 416",
+      "meaning": "Range Not Satisfiable: the server's reply when asked for bytes past a file's end; its Content-Range header names the file's real size."
     }
   ],
   "about": "ParaFlow is a local-first push-to-talk dictation app for Windows: hold a key, speak, release, and cleaned-up text is pasted at the cursor. Speech recognition (Parakeet) and cleanup (a Qwen3 language model) run on the user's own GPU, so no audio leaves the machine.",
   "overview": "A Tauri app shell starts at launch, loads settings, and either shows first-run setup (which downloads the models) or starts dictating. Dictating means launching the local speech server, plus the cleanup server when cleanup is on, as GPU sidecar processes, installing a low-level keyboard hook, and handing everything to a single pipeline thread. The pipeline owns each burst of dictation: it opens the microphone on demand, turns each held key press into a 16 kHz recording, sends it to the speech server, asks the cleanup model to tidy the transcript in the style of the app in front, and pastes the result through the clipboard. A small always-on-top React overlay shows each stage from events the pipeline emits, and a settings window edits a JSON file the rest of the app reads live (turning cleanup on or off needs a restart). An NSIS installer, build tooling and the README and user guide wrap it for shipping.",
   "verified": {
-    "commit": "043aaeba22f0af89cab8d9760cb6bc12240fb661",
+    "commit": "974fc4835849e6c511355a9f56ad046613ec0cef",
     "date": "2026-10-16"
   }
 }
